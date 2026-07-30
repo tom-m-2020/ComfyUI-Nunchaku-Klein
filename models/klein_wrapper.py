@@ -1,0 +1,324 @@
+from collections.abc import Iterator
+
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+
+NUNCHAKU_TENSOR_DICTIONARIES = (
+    "_quantized_part_sd",
+    "_unquantized_part_sd",
+    "_cached_quantized_loras",
+    "_cached_unquantized_loras",
+)
+
+
+def _get_nunchaku_tensor_dictionaries(
+    transformer: nn.Module,
+) -> tuple[dict, ...]:
+    states = []
+    for name in NUNCHAKU_TENSOR_DICTIONARIES:
+        state = getattr(transformer, name, None)
+        if state is None:
+            continue
+        if not isinstance(state, dict):
+            raise RuntimeError(
+                f"Unsupported Nunchaku state: {name} must be a dict, got "
+                f"{type(state).__name__}."
+            )
+        states.append(state)
+
+    ranks = getattr(transformer, "_quantized_part_ranks", None)
+    if ranks is not None and not isinstance(ranks, dict):
+        raise RuntimeError(
+            "Unsupported Nunchaku state: _quantized_part_ranks must be a dict."
+        )
+    if getattr(transformer, "offload", False):
+        raise RuntimeError(
+            "Nunchaku internal block offload must be disabled for this adapter."
+        )
+    return tuple(states)
+
+
+def _iter_unique_live_tensors(
+    base_model: nn.Module,
+    transformer: nn.Module,
+) -> Iterator[torch.Tensor]:
+    seen: set[int] = set()
+    for tensor in (*base_model.parameters(), *base_model.buffers()):
+        if id(tensor) not in seen:
+            seen.add(id(tensor))
+            yield tensor
+
+    for state in _get_nunchaku_tensor_dictionaries(transformer):
+        for tensor in state.values():
+            if torch.is_tensor(tensor) and id(tensor) not in seen:
+                seen.add(id(tensor))
+                yield tensor
+
+
+def calculate_live_model_size(
+    base_model: nn.Module,
+    transformer: nn.Module,
+) -> int:
+    return sum(tensor.nbytes for tensor in _iter_unique_live_tensors(base_model, transformer))
+
+
+class NunchakuFlux2KleinAdapter(nn.Module):
+    def __init__(
+        self,
+        transformer: nn.Module,
+        *,
+        in_channels: int,
+        context_dim: int,
+        patch_size: int,
+        axes_dim: tuple[int, ...],
+        dtype: torch.dtype,
+    ) -> None:
+        super().__init__()
+        _get_nunchaku_tensor_dictionaries(transformer)
+        if patch_size < 1:
+            raise ValueError(f"patch_size must be positive, got {patch_size}.")
+        if len(axes_dim) != 4:
+            raise ValueError(
+                f"FLUX.2 Klein requires four RoPE axes, got {list(axes_dim)}."
+            )
+
+        self.transformer = transformer
+        self.in_channels = in_channels
+        self.context_dim = context_dim
+        self.patch_size = patch_size
+        self.axes_dim = axes_dim
+        self.dtype = dtype
+
+    def _apply(self, fn, recurse: bool = True):
+        # Nunchaku 1.2.1 keeps LoRA originals/caches in private plain dicts.
+        # Track registered aliases so every unique tensor is transformed once.
+        registered_before = [*self.parameters(), *self.buffers()]
+        result = super()._apply(fn, recurse=recurse)
+        registered_after = [*self.parameters(), *self.buffers()]
+        moved = {
+            id(before): after
+            for before, after in zip(
+                registered_before,
+                registered_after,
+                strict=True,
+            )
+        }
+
+        for state in _get_nunchaku_tensor_dictionaries(self.transformer):
+            for key, tensor in list(state.items()):
+                if not torch.is_tensor(tensor):
+                    continue
+                moved_tensor = moved.get(id(tensor))
+                if moved_tensor is None:
+                    moved_tensor = fn(tensor)
+                    moved[id(tensor)] = moved_tensor
+                state[key] = moved_tensor
+        return result
+
+    def _pack_latents(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, int, int]:
+        batch, channels, height, width = x.shape
+        patch = self.patch_size
+        padded_height = ((height + patch - 1) // patch) * patch
+        padded_width = ((width + patch - 1) // patch) * patch
+        if padded_height != height or padded_width != width:
+            x = F.pad(x, (0, padded_width - width, 0, padded_height - height))
+
+        grid_height = padded_height // patch
+        grid_width = padded_width // patch
+        image = (
+            x.reshape(
+                batch,
+                channels,
+                grid_height,
+                patch,
+                grid_width,
+                patch,
+            )
+            .permute(0, 2, 4, 1, 3, 5)
+            .reshape(batch, grid_height * grid_width, channels * patch * patch)
+        )
+
+        image_ids = torch.zeros(
+            (grid_height, grid_width, len(self.axes_dim)),
+            device=x.device,
+            dtype=torch.float32,
+        )
+        image_ids[..., 1] = torch.arange(
+            grid_height,
+            device=x.device,
+            dtype=torch.float32,
+        ).view(grid_height, 1)
+        image_ids[..., 2] = torch.arange(
+            grid_width,
+            device=x.device,
+            dtype=torch.float32,
+        ).view(1, grid_width)
+        return (
+            image,
+            image_ids.reshape(grid_height * grid_width, len(self.axes_dim)),
+            grid_height,
+            grid_width,
+        )
+
+    def _unpack_latents(
+        self,
+        tokens: torch.Tensor,
+        *,
+        grid_height: int,
+        grid_width: int,
+        height: int,
+        width: int,
+    ) -> torch.Tensor:
+        batch = tokens.shape[0]
+        patch = self.patch_size
+        output = (
+            tokens.reshape(
+                batch,
+                grid_height,
+                grid_width,
+                self.in_channels,
+                patch,
+                patch,
+            )
+            .permute(0, 3, 1, 4, 2, 5)
+            .reshape(
+                batch,
+                self.in_channels,
+                grid_height * patch,
+                grid_width * patch,
+            )
+        )
+        return output[:, :, :height, :width]
+
+    def _validate_transformer_inputs(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        timestep: torch.Tensor,
+        img_ids: torch.Tensor,
+        txt_ids: torch.Tensor,
+    ) -> None:
+        batch, image_tokens, _ = hidden_states.shape
+        text_tokens = encoder_hidden_states.shape[1]
+        errors = []
+        if encoder_hidden_states.shape[0] != batch:
+            errors.append(
+                "hidden_states and encoder_hidden_states batches differ "
+                f"({batch} versus {encoder_hidden_states.shape[0]})"
+            )
+        if timestep.ndim != 1 or timestep.shape[0] != batch:
+            errors.append(
+                f"timestep must have shape [{batch}], got {list(timestep.shape)}"
+            )
+        if img_ids.shape != (image_tokens, len(self.axes_dim)):
+            errors.append(
+                "img_ids must be an unbatched position table shaped "
+                f"[{image_tokens}, {len(self.axes_dim)}], got {list(img_ids.shape)}"
+            )
+        if txt_ids.shape != (text_tokens, len(self.axes_dim)):
+            errors.append(
+                "txt_ids must be an unbatched position table shaped "
+                f"[{text_tokens}, {len(self.axes_dim)}], got {list(txt_ids.shape)}"
+            )
+        tensors = {
+            "hidden_states": hidden_states,
+            "encoder_hidden_states": encoder_hidden_states,
+            "timestep": timestep,
+            "img_ids": img_ids,
+            "txt_ids": txt_ids,
+        }
+        wrong_devices = {
+            name: str(tensor.device)
+            for name, tensor in tensors.items()
+            if tensor.device != hidden_states.device
+        }
+        if wrong_devices:
+            errors.append(
+                f"all transformer inputs must be on {hidden_states.device}; "
+                f"mismatches: {wrong_devices}"
+            )
+        if errors:
+            raise ValueError(
+                "Unsafe Nunchaku FLUX.2 input layout; refusing to enter fused "
+                "CUDA kernels: " + "; ".join(errors) + "."
+            )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        timestep: torch.Tensor,
+        context: torch.Tensor,
+        y=None,
+        guidance=None,
+        control=None,
+        transformer_options=None,
+        **kwargs,
+    ) -> torch.Tensor:
+        if x.ndim != 4 or x.shape[1] != self.in_channels:
+            raise ValueError(
+                "Expected a BCHW FLUX.2 latent with "
+                f"{self.in_channels} channels, got shape {list(x.shape)}."
+            )
+        if context is None or context.ndim != 3 or context.shape[-1] != self.context_dim:
+            shape = None if context is None else list(context.shape)
+            raise ValueError(
+                "Expected text context shaped [batch, tokens, "
+                f"{self.context_dim}], got {shape}."
+            )
+        if timestep is None:
+            raise ValueError("FLUX.2 Klein requires a timestep tensor.")
+        if control is not None:
+            raise NotImplementedError("ControlNet is not supported by this loader.")
+        if kwargs.get("ref_latents") is not None:
+            raise NotImplementedError("Reference-image editing is not supported.")
+
+        batch, _, height, width = x.shape
+        image, image_ids, grid_height, grid_width = self._pack_latents(x)
+        text_ids = torch.zeros(
+            (context.shape[1], len(self.axes_dim)),
+            device=x.device,
+            dtype=torch.float32,
+        )
+        text_ids[..., 3] = torch.arange(
+            context.shape[1],
+            device=x.device,
+            dtype=torch.float32,
+        )
+
+        self._validate_transformer_inputs(
+            image,
+            context,
+            timestep,
+            image_ids,
+            text_ids,
+        )
+
+        # Nunchaku 1.2.1 discards the batch axis of 3-D position IDs, while its
+        # fused rotary kernel flattens B*S. Dispatching one sample at a time is
+        # required for correct CFG batches until the backend supports batched
+        # Flux.2 rotary embeddings end to end.
+        outputs = []
+        for index in range(batch):
+            outputs.append(
+                self.transformer(
+                    hidden_states=image[index : index + 1],
+                    encoder_hidden_states=context[index : index + 1],
+                    timestep=timestep[index : index + 1],
+                    img_ids=image_ids,
+                    txt_ids=text_ids,
+                    guidance=None,
+                ).sample
+            )
+        output = torch.cat(outputs, dim=0)
+        return self._unpack_latents(
+            output,
+            grid_height=grid_height,
+            grid_width=grid_width,
+            height=height,
+            width=width,
+        )
