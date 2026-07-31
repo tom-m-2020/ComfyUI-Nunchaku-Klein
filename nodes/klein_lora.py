@@ -13,6 +13,22 @@ from ..models.klein_wrapper import (
 )
 
 
+def _get_inherited_lora_specs(model) -> tuple[KleinLoraSpec, ...]:
+    transformer_options = model.model_options.get("transformer_options")
+    if not isinstance(transformer_options, dict):
+        raise RuntimeError(
+            "Nunchaku Klein MODEL has invalid transformer options."
+        )
+    inherited = transformer_options.get(LORA_SPEC_OPTION, ())
+    if not isinstance(inherited, tuple) or not all(
+        isinstance(spec, KleinLoraSpec) for spec in inherited
+    ):
+        raise RuntimeError(
+            f"{LORA_SPEC_OPTION} must contain a tuple of KleinLoraSpec."
+        )
+    return inherited
+
+
 class NunchakuKleinLoraLoader:
     def __init__(self):
         self.loaded_lora = None
@@ -48,10 +64,11 @@ class NunchakuKleinLoraLoader:
                 "Nunchaku Klein LoRA loading requires a MODEL from "
                 "NunchakuKleinModelLoader."
             )
+        inherited = _get_inherited_lora_specs(model)
 
         if strength == 0.0:
             branch = model.clone()
-            branch.model_options["transformer_options"][LORA_SPEC_OPTION] = ()
+            branch.model_options["transformer_options"][LORA_SPEC_OPTION] = inherited
             return (branch,)
 
         transformer = adapter.transformer
@@ -115,6 +132,7 @@ class NunchakuKleinLoraLoader:
 
         branch = model.clone()
         branch.model_options["transformer_options"][LORA_SPEC_OPTION] = (
+            *inherited,
             KleinLoraSpec(
                 path=lora_path.resolve(),
                 size=stat.st_size,
