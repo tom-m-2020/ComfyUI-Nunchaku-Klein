@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import threading
 import weakref
@@ -8,6 +9,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+
+logger = logging.getLogger(__name__)
 
 LORA_SPEC_OPTION = "nunchaku_klein_lora_spec"
 _SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
@@ -29,12 +32,18 @@ class KleinLoraSpec:
     state_dict: dict[str, torch.Tensor]
 
     @property
-    def identity(self) -> tuple:
+    def source_identity(self) -> tuple:
         return (
             "lora",
             str(self.path),
             self.size,
             self.mtime_ns,
+        )
+
+    @property
+    def identity(self) -> tuple:
+        return (
+            *self.source_identity,
             self.strength,
         )
 
@@ -101,7 +110,11 @@ class SharedKleinLoraState:
         self._patchers = weakref.WeakSet()
 
     def require_lora_capabilities(self) -> None:
-        for method in ("update_lora_params", "reset_lora"):
+        for method in (
+            "update_lora_params",
+            "set_lora_strength",
+            "reset_lora",
+        ):
             if not callable(getattr(self.transformer, method, None)):
                 raise RuntimeError(
                     "The installed Nunchaku FLUX.2 backend does not support "
@@ -143,6 +156,17 @@ class SharedKleinLoraState:
         base_model.model_loaded_weight_memory = new_size if fully_loaded else 0
         self.current_size = new_size
 
+    @staticmethod
+    def _log_desired_loras(desired: KleinLoraSpec | None) -> None:
+        if desired is None:
+            logger.info("Desired LoRAs:\n  (none)")
+            return
+        logger.info(
+            "Desired LoRAs:\n  [0] %s @ %.3f",
+            desired.path.name,
+            desired.strength,
+        )
+
     def ensure(self, desired: KleinLoraSpec | None) -> None:
         if self.invalid_reason is not None:
             raise RuntimeError(
@@ -153,6 +177,7 @@ class SharedKleinLoraState:
         identity = ("no_lora",) if desired is None else desired.identity
         if identity == self.active_identity:
             return
+        self._log_desired_loras(desired)
         self.require_lora_capabilities()
         if self.current_size is None:
             raise RuntimeError("Nunchaku LoRA accounting was not initialized.")
@@ -160,8 +185,13 @@ class SharedKleinLoraState:
         old_size = self.current_size
         try:
             if desired is None:
+                logger.info("Transition: RESET")
                 self.transformer.reset_lora()
+            elif self.active_identity[:-1] == desired.source_identity:
+                logger.info("Transition: SET_STRENGTH")
+                self.transformer.set_lora_strength(desired.strength)
             else:
+                logger.info("Transition: APPLY")
                 self.transformer.update_lora_params(
                     desired.state_dict,
                     strength=desired.strength,

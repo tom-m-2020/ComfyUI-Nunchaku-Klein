@@ -49,6 +49,14 @@ class NunchakuKleinLoraLoader:
                 "NunchakuKleinModelLoader."
             )
 
+        if strength == 0.0:
+            branch = model.clone()
+            branch.model_options["transformer_options"].pop(
+                LORA_SPEC_OPTION,
+                None,
+            )
+            return (branch,)
+
         transformer = adapter.transformer
         adapter.shared_lora_state.require_lora_capabilities()
         convert_lora = getattr(transformer, "_convert_lora_keys", None)
