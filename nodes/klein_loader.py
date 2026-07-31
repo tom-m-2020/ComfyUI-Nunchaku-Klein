@@ -19,6 +19,7 @@ from ..models.klein_wrapper import (
 
 
 _WRAPPER_KEY = "nunchaku_klein_force_full_load"
+_CLONE_CALLBACK_KEY = "nunchaku_klein_shared_lora_state"
 
 
 def _force_full_load(executor, model, noise_shape, conds, *args, **kwargs):
@@ -311,6 +312,17 @@ class NunchakuKleinModelLoader:
                 comfy.patcher_extension.WrappersMP.PREPARE_SAMPLING,
                 _WRAPPER_KEY,
                 _force_full_load,
+            )
+            adapter.shared_lora_state.current_size = live_size
+            adapter.shared_lora_state.register_patcher(patcher)
+
+            def register_clone(_source, clone):
+                adapter.shared_lora_state.register_patcher(clone)
+
+            patcher.add_callback_with_key(
+                comfy.patcher_extension.CallbacksMP.ON_CLONE,
+                _CLONE_CALLBACK_KEY,
+                register_clone,
             )
 
             # from_pretrained constructs on CUDA. Forced registration records

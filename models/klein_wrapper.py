@@ -1,9 +1,16 @@
 from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+import threading
+import weakref
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
+
+LORA_SPEC_OPTION = "nunchaku_klein_lora_spec"
+_SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
 
 NUNCHAKU_TENSOR_DICTIONARIES = (
     "_quantized_part_sd",
@@ -11,6 +18,25 @@ NUNCHAKU_TENSOR_DICTIONARIES = (
     "_cached_quantized_loras",
     "_cached_unquantized_loras",
 )
+
+
+@dataclass(frozen=True)
+class KleinLoraSpec:
+    path: Path
+    size: int
+    mtime_ns: int
+    strength: float
+    state_dict: dict[str, torch.Tensor]
+
+    @property
+    def identity(self) -> tuple:
+        return (
+            "lora",
+            str(self.path),
+            self.size,
+            self.mtime_ns,
+            self.strength,
+        )
 
 
 def _get_nunchaku_tensor_dictionaries(
@@ -64,6 +90,118 @@ def calculate_live_model_size(
     return sum(tensor.nbytes for tensor in _iter_unique_live_tensors(base_model, transformer))
 
 
+class SharedKleinLoraState:
+    def __init__(self, transformer: nn.Module) -> None:
+        self.transformer = transformer
+        self.lock = threading.RLock()
+        self.active_identity = ("no_lora",)
+        self.generation = 0
+        self.invalid_reason: str | None = None
+        self.current_size: int | None = None
+        self._patchers = weakref.WeakSet()
+
+    def require_lora_capabilities(self) -> None:
+        for method in ("update_lora_params", "reset_lora"):
+            if not callable(getattr(self.transformer, method, None)):
+                raise RuntimeError(
+                    "The installed Nunchaku FLUX.2 backend does not support "
+                    f"branch-safe LoRA switching: missing {method}()."
+                )
+
+    def register_patcher(self, patcher) -> None:
+        with self.lock:
+            self._patchers.add(patcher)
+            if self.current_size is not None:
+                patcher.size = self.current_size
+
+    def _refresh_accounting(self, old_size: int) -> None:
+        patchers = list(self._patchers)
+        if not patchers:
+            raise RuntimeError("No live ModelPatcher is registered for this model.")
+
+        base_models = {id(patcher.model): patcher.model for patcher in patchers}
+        if len(base_models) != 1:
+            raise RuntimeError(
+                "Unsupported Nunchaku clone layout: LoRA branches must share "
+                "one ComfyUI BaseModel."
+            )
+        base_model = next(iter(base_models.values()))
+        loaded_memory = base_model.model_loaded_weight_memory
+        if loaded_memory == old_size:
+            fully_loaded = True
+        elif loaded_memory == 0:
+            fully_loaded = False
+        else:
+            raise RuntimeError(
+                "Cannot change a Klein LoRA while ComfyUI reports partial "
+                f"residency ({loaded_memory} of {old_size} bytes)."
+            )
+
+        new_size = calculate_live_model_size(base_model, self.transformer)
+        for patcher in patchers:
+            patcher.size = new_size
+        base_model.model_loaded_weight_memory = new_size if fully_loaded else 0
+        self.current_size = new_size
+
+    def ensure(self, desired: KleinLoraSpec | None) -> None:
+        if self.invalid_reason is not None:
+            raise RuntimeError(
+                "The shared Nunchaku transformer LoRA state is invalid; "
+                "reload the model before sampling. " + self.invalid_reason
+            )
+
+        identity = ("no_lora",) if desired is None else desired.identity
+        if identity == self.active_identity:
+            return
+        self.require_lora_capabilities()
+        if self.current_size is None:
+            raise RuntimeError("Nunchaku LoRA accounting was not initialized.")
+
+        old_size = self.current_size
+        try:
+            if desired is None:
+                self.transformer.reset_lora()
+            else:
+                self.transformer.update_lora_params(
+                    desired.state_dict,
+                    strength=desired.strength,
+                )
+            self._refresh_accounting(old_size)
+        except Exception as transition_error:
+            try:
+                self.transformer.reset_lora()
+                self._refresh_accounting(old_size)
+            except Exception as rollback_error:
+                self.invalid_reason = (
+                    f"LoRA transition failed ({transition_error!r}) and "
+                    f"rollback failed ({rollback_error!r})."
+                )
+                raise RuntimeError(self.invalid_reason) from transition_error
+            self.active_identity = ("no_lora",)
+            raise RuntimeError(
+                "Nunchaku LoRA transition failed; original weights were "
+                "restored and the requested forward was cancelled."
+            ) from transition_error
+
+        self.active_identity = identity
+        self.generation += 1
+
+
+def get_or_create_shared_lora_state(
+    transformer: nn.Module,
+) -> SharedKleinLoraState:
+    state = getattr(transformer, _SHARED_LORA_STATE_ATTRIBUTE, None)
+    if state is None:
+        state = SharedKleinLoraState(transformer)
+        setattr(transformer, _SHARED_LORA_STATE_ATTRIBUTE, state)
+    elif not isinstance(state, SharedKleinLoraState):
+        raise RuntimeError(
+            f"Transformer attribute {_SHARED_LORA_STATE_ATTRIBUTE!r} is "
+            "already owned by incompatible code."
+        )
+    return state
+
+
 class NunchakuFlux2KleinAdapter(nn.Module):
     def __init__(
         self,
@@ -90,32 +228,34 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         self.patch_size = patch_size
         self.axes_dim = axes_dim
         self.dtype = dtype
+        self.shared_lora_state = get_or_create_shared_lora_state(transformer)
 
     def _apply(self, fn, recurse: bool = True):
         # Nunchaku 1.2.1 keeps LoRA originals/caches in private plain dicts.
         # Track registered aliases so every unique tensor is transformed once.
-        registered_before = [*self.parameters(), *self.buffers()]
-        result = super()._apply(fn, recurse=recurse)
-        registered_after = [*self.parameters(), *self.buffers()]
-        moved = {
-            id(before): after
-            for before, after in zip(
-                registered_before,
-                registered_after,
-                strict=True,
-            )
-        }
+        with self.shared_lora_state.lock:
+            registered_before = [*self.parameters(), *self.buffers()]
+            result = super()._apply(fn, recurse=recurse)
+            registered_after = [*self.parameters(), *self.buffers()]
+            moved = {
+                id(before): after
+                for before, after in zip(
+                    registered_before,
+                    registered_after,
+                    strict=True,
+                )
+            }
 
-        for state in _get_nunchaku_tensor_dictionaries(self.transformer):
-            for key, tensor in list(state.items()):
-                if not torch.is_tensor(tensor):
-                    continue
-                moved_tensor = moved.get(id(tensor))
-                if moved_tensor is None:
-                    moved_tensor = fn(tensor)
-                    moved[id(tensor)] = moved_tensor
-                state[key] = moved_tensor
-        return result
+            for state in _get_nunchaku_tensor_dictionaries(self.transformer):
+                for key, tensor in list(state.items()):
+                    if not torch.is_tensor(tensor):
+                        continue
+                    moved_tensor = moved.get(id(tensor))
+                    if moved_tensor is None:
+                        moved_tensor = fn(tensor)
+                        moved[id(tensor)] = moved_tensor
+                    state[key] = moved_tensor
+            return result
 
     def _pack_latents(
         self,
@@ -302,23 +442,37 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         # fused rotary kernel flattens B*S. Dispatching one sample at a time is
         # required for correct CFG batches until the backend supports batched
         # Flux.2 rotary embeddings end to end.
-        outputs = []
-        for index in range(batch):
-            outputs.append(
-                self.transformer(
-                    hidden_states=image[index : index + 1],
-                    encoder_hidden_states=context[index : index + 1],
-                    timestep=timestep[index : index + 1],
-                    img_ids=image_ids,
-                    txt_ids=text_ids,
-                    guidance=None,
-                ).sample
+        desired = None
+        if transformer_options is not None:
+            desired = transformer_options.get(LORA_SPEC_OPTION)
+        if desired is not None and not isinstance(desired, KleinLoraSpec):
+            raise TypeError(
+                f"{LORA_SPEC_OPTION} must contain a KleinLoraSpec, got "
+                f"{type(desired).__name__}."
             )
-        output = torch.cat(outputs, dim=0)
-        return self._unpack_latents(
-            output,
-            grid_height=grid_height,
-            grid_width=grid_width,
-            height=height,
-            width=width,
-        )
+
+        # The transformer weights are shared by ModelPatcher clones. Keep the
+        # lock through every serialized CFG/batch call so no sibling branch can
+        # switch physical LoRA state during this logical adapter forward.
+        with self.shared_lora_state.lock:
+            self.shared_lora_state.ensure(desired)
+            outputs = []
+            for index in range(batch):
+                outputs.append(
+                    self.transformer(
+                        hidden_states=image[index : index + 1],
+                        encoder_hidden_states=context[index : index + 1],
+                        timestep=timestep[index : index + 1],
+                        img_ids=image_ids,
+                        txt_ids=text_ids,
+                        guidance=None,
+                    ).sample
+                )
+            output = torch.cat(outputs, dim=0)
+            return self._unpack_latents(
+                output,
+                grid_height=grid_height,
+                grid_width=grid_width,
+                height=height,
+                width=width,
+            )
