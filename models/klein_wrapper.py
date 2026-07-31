@@ -103,7 +103,7 @@ class SharedKleinLoraState:
     def __init__(self, transformer: nn.Module) -> None:
         self.transformer = transformer
         self.lock = threading.RLock()
-        self.active_identity = ("no_lora",)
+        self.active_identity: tuple[tuple, ...] = ()
         self.generation = 0
         self.invalid_reason: str | None = None
         self.current_size: int | None = None
@@ -157,44 +157,54 @@ class SharedKleinLoraState:
         self.current_size = new_size
 
     @staticmethod
-    def _log_desired_loras(desired: KleinLoraSpec | None) -> None:
-        if desired is None:
+    def _log_desired_loras(
+        desired: tuple[KleinLoraSpec, ...],
+    ) -> None:
+        if not desired:
             logger.info("Desired LoRAs:\n  (none)")
             return
-        logger.info(
-            "Desired LoRAs:\n  [0] %s @ %.3f",
-            desired.path.name,
-            desired.strength,
+        entries = "\n".join(
+            f"  [{index}] {spec.path.name} @ {spec.strength:.3f}"
+            for index, spec in enumerate(desired)
         )
+        logger.info("Desired LoRAs:\n%s", entries)
 
-    def ensure(self, desired: KleinLoraSpec | None) -> None:
+    def ensure(self, desired: tuple[KleinLoraSpec, ...]) -> None:
         if self.invalid_reason is not None:
             raise RuntimeError(
                 "The shared Nunchaku transformer LoRA state is invalid; "
                 "reload the model before sampling. " + self.invalid_reason
             )
 
-        identity = ("no_lora",) if desired is None else desired.identity
+        identity = tuple(spec.identity for spec in desired)
         if identity == self.active_identity:
             return
         self._log_desired_loras(desired)
+        if len(desired) > 1:
+            raise NotImplementedError(
+                "Multiple FLUX.2 Klein LoRAs are represented but composition "
+                "is not implemented yet."
+            )
         self.require_lora_capabilities()
         if self.current_size is None:
             raise RuntimeError("Nunchaku LoRA accounting was not initialized.")
 
         old_size = self.current_size
         try:
-            if desired is None:
+            if not desired:
                 logger.info("Transition: RESET")
                 self.transformer.reset_lora()
-            elif self.active_identity[:-1] == desired.source_identity:
+            elif (
+                len(self.active_identity) == 1
+                and self.active_identity[0][:-1] == desired[0].source_identity
+            ):
                 logger.info("Transition: SET_STRENGTH")
-                self.transformer.set_lora_strength(desired.strength)
+                self.transformer.set_lora_strength(desired[0].strength)
             else:
                 logger.info("Transition: APPLY")
                 self.transformer.update_lora_params(
-                    desired.state_dict,
-                    strength=desired.strength,
+                    desired[0].state_dict,
+                    strength=desired[0].strength,
                 )
             self._refresh_accounting(old_size)
         except Exception as transition_error:
@@ -207,7 +217,7 @@ class SharedKleinLoraState:
                     f"rollback failed ({rollback_error!r})."
                 )
                 raise RuntimeError(self.invalid_reason) from transition_error
-            self.active_identity = ("no_lora",)
+            self.active_identity = ()
             raise RuntimeError(
                 "Nunchaku LoRA transition failed; original weights were "
                 "restored and the requested forward was cancelled."
@@ -472,12 +482,14 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         # fused rotary kernel flattens B*S. Dispatching one sample at a time is
         # required for correct CFG batches until the backend supports batched
         # Flux.2 rotary embeddings end to end.
-        desired = None
+        desired = ()
         if transformer_options is not None:
-            desired = transformer_options.get(LORA_SPEC_OPTION)
-        if desired is not None and not isinstance(desired, KleinLoraSpec):
+            desired = transformer_options.get(LORA_SPEC_OPTION, ())
+        if not isinstance(desired, tuple) or not all(
+            isinstance(spec, KleinLoraSpec) for spec in desired
+        ):
             raise TypeError(
-                f"{LORA_SPEC_OPTION} must contain a KleinLoraSpec, got "
+                f"{LORA_SPEC_OPTION} must contain a tuple of KleinLoraSpec, got "
                 f"{type(desired).__name__}."
             )
 

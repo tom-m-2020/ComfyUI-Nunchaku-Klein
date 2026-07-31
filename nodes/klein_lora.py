@@ -51,10 +51,7 @@ class NunchakuKleinLoraLoader:
 
         if strength == 0.0:
             branch = model.clone()
-            branch.model_options["transformer_options"].pop(
-                LORA_SPEC_OPTION,
-                None,
-            )
+            branch.model_options["transformer_options"][LORA_SPEC_OPTION] = ()
             return (branch,)
 
         transformer = adapter.transformer
@@ -124,7 +121,7 @@ class NunchakuKleinLoraLoader:
                 mtime_ns=stat.st_mtime_ns,
                 strength=float(strength),
                 state_dict=state_dict,
-            )
+            ),
         )
         adapter.shared_lora_state.register_patcher(branch)
         return (branch,)

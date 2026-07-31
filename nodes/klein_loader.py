@@ -13,6 +13,7 @@ import comfy.supported_models
 import folder_paths
 
 from ..models.klein_wrapper import (
+    LORA_SPEC_OPTION,
     NunchakuFlux2KleinAdapter,
     calculate_live_model_size,
 )
@@ -308,6 +309,7 @@ class NunchakuKleinModelLoader:
                 offload_device,
                 size=live_size,
             )
+            patcher.model_options["transformer_options"][LORA_SPEC_OPTION] = ()
             patcher.add_wrapper_with_key(
                 comfy.patcher_extension.WrappersMP.PREPARE_SAMPLING,
                 _WRAPPER_KEY,
