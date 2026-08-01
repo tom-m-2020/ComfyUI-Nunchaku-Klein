@@ -1,6 +1,8 @@
+from collections import OrderedDict
 from collections.abc import Iterator
 from dataclasses import dataclass
 import logging
+import math
 from pathlib import Path
 import threading
 import weakref
@@ -46,6 +48,93 @@ class KleinLoraSpec:
             *self.source_identity,
             self.strength,
         )
+
+
+class KleinLoraPreparationCache:
+    """Bounded cache of immutable states composed from complete flat tuples."""
+
+    def __init__(self, max_entries: int = 2) -> None:
+        if max_entries < 2:
+            raise ValueError("The prepared LoRA cache requires at least two entries.")
+        self.max_entries = max_entries
+        self._entries: OrderedDict[tuple[tuple, ...], dict[str, torch.Tensor]] = (
+            OrderedDict()
+        )
+        self._active_identity: tuple[tuple, ...] | None = None
+
+    def prepare(
+        self,
+        desired: tuple[KleinLoraSpec, ...],
+    ) -> dict[str, torch.Tensor]:
+        if not isinstance(desired, tuple):
+            raise TypeError("Prepared Klein LoRAs require an ordered tuple.")
+        if not desired:
+            raise ValueError("Cannot compose an empty LoRA collection.")
+        for spec in desired:
+            if not isinstance(spec, KleinLoraSpec):
+                raise TypeError("Prepared Klein LoRAs require KleinLoraSpec entries.")
+            if not math.isfinite(spec.strength):
+                raise ValueError(
+                    f"LoRA strength must be finite, got {spec.strength} for {spec.path}."
+                )
+
+        identity = tuple(spec.identity for spec in desired)
+        cached = self._entries.get(identity)
+        if cached is not None:
+            self._entries.move_to_end(identity)
+            return cached
+
+        try:
+            from nunchaku.lora.common import compose_lora
+        except ImportError as error:
+            raise RuntimeError(
+                "The installed Nunchaku backend does not provide the public "
+                "nunchaku.lora.common.compose_lora API required for composed "
+                "FLUX.2 Klein LoRAs."
+            ) from error
+
+        # Always start from the canonical flat graph tuple. Reusing prepared
+        # subgroups would make floating-point 1-D sums grouping-dependent.
+        prepared = compose_lora(
+            [(spec.state_dict, spec.strength) for spec in desired]
+        )
+        if not isinstance(prepared, dict) or not prepared:
+            raise RuntimeError("Nunchaku compose_lora() returned no prepared weights.")
+        if not all(torch.is_tensor(tensor) for tensor in prepared.values()):
+            raise RuntimeError("Nunchaku compose_lora() returned non-tensor weights.")
+
+        self._entries[identity] = prepared
+        self._evict({identity, self._active_identity})
+        return prepared
+
+    def set_active(self, identity: tuple[tuple, ...] | None) -> None:
+        self._active_identity = identity if identity in self._entries else None
+        self._evict({self._active_identity})
+
+    def _evict(self, protected: set[tuple[tuple, ...] | None]) -> None:
+        while len(self._entries) > self.max_entries:
+            evicted = False
+            for identity in tuple(self._entries):
+                if identity not in protected:
+                    del self._entries[identity]
+                    evicted = True
+                    break
+            if not evicted:
+                raise RuntimeError("Prepared LoRA cache cannot evict a protected entry.")
+
+    def unique_tensor_bytes(self) -> int:
+        seen: set[int] = set()
+        total = 0
+        for prepared in self._entries.values():
+            for tensor in prepared.values():
+                if id(tensor) not in seen:
+                    seen.add(id(tensor))
+                    total += tensor.nbytes
+        return total
+
+    @property
+    def identities(self) -> tuple[tuple[tuple, ...], ...]:
+        return tuple(self._entries)
 
 
 def _get_nunchaku_tensor_dictionaries(
@@ -108,6 +197,7 @@ class SharedKleinLoraState:
         self.invalid_reason: str | None = None
         self.current_size: int | None = None
         self._patchers = weakref.WeakSet()
+        self.prepared_cache = KleinLoraPreparationCache()
 
     def require_lora_capabilities(self) -> None:
         for method in (
@@ -170,6 +260,10 @@ class SharedKleinLoraState:
         logger.info("Desired LoRAs:\n%s", entries)
 
     def ensure(self, desired: tuple[KleinLoraSpec, ...]) -> None:
+        with self.lock:
+            self._ensure_locked(desired)
+
+    def _ensure_locked(self, desired: tuple[KleinLoraSpec, ...]) -> None:
         if self.invalid_reason is not None:
             raise RuntimeError(
                 "The shared Nunchaku transformer LoRA state is invalid; "
@@ -180,26 +274,34 @@ class SharedKleinLoraState:
         if identity == self.active_identity:
             return
         self._log_desired_loras(desired)
-        if len(desired) > 1:
-            raise NotImplementedError(
-                "Multiple FLUX.2 Klein LoRAs are represented but composition "
-                "is not implemented yet."
-            )
         self.require_lora_capabilities()
         if self.current_size is None:
             raise RuntimeError("Nunchaku LoRA accounting was not initialized.")
 
         old_size = self.current_size
+        prepared = None
+        use_composition = len(desired) > 1 or (
+            len(desired) == 1 and desired[0].strength <= 0
+        )
+        if use_composition:
+            # Preparation happens before backend mutation. A compose failure
+            # therefore leaves physical weights and accounting untouched.
+            prepared = self.prepared_cache.prepare(desired)
+
         try:
             if not desired:
                 logger.info("Transition: RESET")
                 self.transformer.reset_lora()
             elif (
-                len(self.active_identity) == 1
+                not use_composition
+                and len(self.active_identity) == 1
                 and self.active_identity[0][:-1] == desired[0].source_identity
             ):
                 logger.info("Transition: SET_STRENGTH")
                 self.transformer.set_lora_strength(desired[0].strength)
+            elif use_composition:
+                logger.info("Transition: COMPOSE %d", len(desired))
+                self.transformer.update_lora_params(prepared, strength=1.0)
             else:
                 logger.info("Transition: APPLY")
                 self.transformer.update_lora_params(
@@ -218,12 +320,14 @@ class SharedKleinLoraState:
                 )
                 raise RuntimeError(self.invalid_reason) from transition_error
             self.active_identity = ()
+            self.prepared_cache.set_active(None)
             raise RuntimeError(
                 "Nunchaku LoRA transition failed; original weights were "
                 "restored and the requested forward was cancelled."
             ) from transition_error
 
         self.active_identity = identity
+        self.prepared_cache.set_active(identity if use_composition else None)
         self.generation += 1
 
 
