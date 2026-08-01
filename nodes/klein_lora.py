@@ -41,7 +41,7 @@ class NunchakuKleinLoraLoader:
                 "lora_name": (folder_paths.get_filename_list("loras"),),
                 "strength": (
                     "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05},
+                    {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05},
                 ),
             }
         }
@@ -54,10 +54,8 @@ class NunchakuKleinLoraLoader:
     )
 
     def load_lora(self, model, lora_name: str, strength: float):
-        if not math.isfinite(strength) or strength < 0:
-            raise ValueError(
-                f"LoRA strength must be a finite non-negative value, got {strength}."
-            )
+        if not math.isfinite(strength):
+            raise ValueError(f"LoRA strength must be finite, got {strength}.")
         adapter = getattr(model.model, "diffusion_model", None)
         if not isinstance(adapter, NunchakuFlux2KleinAdapter):
             raise TypeError(
