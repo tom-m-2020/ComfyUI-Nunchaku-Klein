@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 LORA_SPEC_OPTION = "nunchaku_klein_lora_spec"
 _SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
+# ComfyUI 0.29's Flux2 detection and Diffusers' Klein pipeline both separate
+# reference images on RoPE axis 0 with indices 10, 20, ... .
+REFERENCE_IMAGE_INDEX_STRIDE = 10.0
 
 NUNCHAKU_TENSOR_DICTIONARIES = (
     "_quantized_part_sd",
@@ -610,6 +613,8 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     "BCHW latent tensors."
                 )
             ref_method = kwargs.get("ref_latents_method")
+            # Current ComfyUI Flux2 uses "index". None means its model-config
+            # default, which is also "index" for the validated Klein 9B path.
             if ref_method not in (None, "index"):
                 raise NotImplementedError(
                     "This adapter supports only ComfyUI's FLUX.2 Klein "
@@ -647,7 +652,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     )
                 packed, ids, _, _ = self._pack_latents(
                     reference,
-                    image_index=10.0 * ref_index,
+                    image_index=REFERENCE_IMAGE_INDEX_STRIDE * ref_index,
                 )
                 packed_references.append(packed)
                 reference_ids.append(ids)
@@ -716,6 +721,8 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                         f"{self.in_channels * self.patch_size**2}], got "
                         f"{list(sample.shape)}."
                     )
+                # The backend returns generated tokens followed by reference
+                # tokens. Discard reference outputs before latent reconstruction.
                 outputs.append(sample[:, :generated_tokens])
             output = torch.cat(outputs, dim=0)
             return self._unpack_latents(
