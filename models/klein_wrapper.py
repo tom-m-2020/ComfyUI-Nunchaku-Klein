@@ -82,7 +82,20 @@ class KleinLoraPreparationCache:
         cached = self._entries.get(identity)
         if cached is not None:
             self._entries.move_to_end(identity)
+            logger.info(
+                "Prepared LoRA cache: HIT %s (%d entries, %.2f MiB)",
+                " + ".join(spec.path.name for spec in desired),
+                len(self._entries),
+                self.unique_tensor_bytes() / (1024 * 1024),
+            )
             return cached
+
+        logger.info(
+            "Prepared LoRA cache: MISS %s (%d entries, %.2f MiB)",
+            " + ".join(spec.path.name for spec in desired),
+            len(self._entries),
+            self.unique_tensor_bytes() / (1024 * 1024),
+        )
 
         try:
             from nunchaku.lora.common import compose_lora
@@ -104,23 +117,47 @@ class KleinLoraPreparationCache:
             raise RuntimeError("Nunchaku compose_lora() returned non-tensor weights.")
 
         self._entries[identity] = prepared
-        self._evict({identity, self._active_identity})
+        logger.info(
+            "Prepared LoRA cache: STORE %s (%d entries, %.2f MiB)",
+            " + ".join(spec.path.name for spec in desired),
+            len(self._entries),
+            self.unique_tensor_bytes() / (1024 * 1024),
+        )
+
+        protected = {identity, self._active_identity}
+
+        if self._evict(protected):
+            logger.info(
+                "Prepared LoRA cache: AFTER EVICT (%d entries, %.2f MiB)",
+                len(self._entries),
+                self.unique_tensor_bytes() / (1024 * 1024),
+            )
+
         return prepared
 
     def set_active(self, identity: tuple[tuple, ...] | None) -> None:
         self._active_identity = identity if identity in self._entries else None
         self._evict({self._active_identity})
 
-    def _evict(self, protected: set[tuple[tuple, ...] | None]) -> None:
+    def _evict(self, protected: set[tuple[tuple, ...] | None]) -> bool:
+        evicted_any = False
         while len(self._entries) > self.max_entries:
             evicted = False
             for identity in tuple(self._entries):
                 if identity not in protected:
+                    logger.info(
+                        "Prepared LoRA cache: EVICT %s",
+                        " + ".join(Path(spec[1]).name for spec in identity),
+                    )
                     del self._entries[identity]
                     evicted = True
+                    evicted_any = True
                     break
+
             if not evicted:
                 raise RuntimeError("Prepared LoRA cache cannot evict a protected entry.")
+
+        return evicted_any
 
     def unique_tensor_bytes(self) -> int:
         seen: set[int] = set()
