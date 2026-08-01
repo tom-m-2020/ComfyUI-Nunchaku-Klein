@@ -441,6 +441,8 @@ class NunchakuFlux2KleinAdapter(nn.Module):
     def _pack_latents(
         self,
         x: torch.Tensor,
+        *,
+        image_index: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, int, int]:
         batch, channels, height, width = x.shape
         patch = self.patch_size
@@ -469,6 +471,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             device=x.device,
             dtype=torch.float32,
         )
+        image_ids[..., 0] = image_index
         image_ids[..., 1] = torch.arange(
             grid_height,
             device=x.device,
@@ -595,11 +598,62 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             raise ValueError("FLUX.2 Klein requires a timestep tensor.")
         if control is not None:
             raise NotImplementedError("ControlNet is not supported by this loader.")
-        if kwargs.get("ref_latents") is not None:
-            raise NotImplementedError("Reference-image editing is not supported.")
 
         batch, _, height, width = x.shape
         image, image_ids, grid_height, grid_width = self._pack_latents(x)
+        generated_tokens = image.shape[1]
+        ref_latents = kwargs.get("ref_latents")
+        if ref_latents is not None:
+            if not isinstance(ref_latents, list) or not ref_latents:
+                raise TypeError(
+                    "FLUX.2 Klein ref_latents must be a non-empty list of "
+                    "BCHW latent tensors."
+                )
+            ref_method = kwargs.get("ref_latents_method")
+            if ref_method not in (None, "index"):
+                raise NotImplementedError(
+                    "This adapter supports only ComfyUI's FLUX.2 Klein "
+                    f"reference method 'index', got {ref_method!r}."
+                )
+
+            packed_references = []
+            reference_ids = []
+            for ref_index, reference in enumerate(ref_latents, start=1):
+                if not torch.is_tensor(reference):
+                    raise TypeError(
+                        f"Reference {ref_index} must be a torch.Tensor, got "
+                        f"{type(reference).__name__}."
+                    )
+                if reference.ndim != 4 or reference.shape[1] != self.in_channels:
+                    raise ValueError(
+                        f"Reference {ref_index} must be BCHW with "
+                        f"{self.in_channels} channels, got {list(reference.shape)}."
+                    )
+                if reference.shape[0] != batch:
+                    raise ValueError(
+                        f"Reference {ref_index} batch must match the effective "
+                        f"sampling batch {batch}, got {reference.shape[0]}."
+                    )
+                if reference.shape[-2] < 1 or reference.shape[-1] < 1:
+                    raise ValueError(
+                        f"Reference {ref_index} spatial dimensions must be "
+                        f"positive, got {list(reference.shape[-2:])}."
+                    )
+                if reference.device != x.device or reference.dtype != x.dtype:
+                    raise ValueError(
+                        f"Reference {ref_index} must match generated latent "
+                        f"device/dtype {x.device}/{x.dtype}, got "
+                        f"{reference.device}/{reference.dtype}."
+                    )
+                packed, ids, _, _ = self._pack_latents(
+                    reference,
+                    image_index=10.0 * ref_index,
+                )
+                packed_references.append(packed)
+                reference_ids.append(ids)
+
+            image = torch.cat([image, *packed_references], dim=1)
+            image_ids = torch.cat([image_ids, *reference_ids], dim=0)
         text_ids = torch.zeros(
             (context.shape[1], len(self.axes_dim)),
             device=x.device,
@@ -641,16 +695,28 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             self.shared_lora_state.ensure(desired)
             outputs = []
             for index in range(batch):
-                outputs.append(
-                    self.transformer(
-                        hidden_states=image[index : index + 1],
-                        encoder_hidden_states=context[index : index + 1],
-                        timestep=timestep[index : index + 1],
-                        img_ids=image_ids,
-                        txt_ids=text_ids,
-                        guidance=None,
-                    ).sample
-                )
+                sample = self.transformer(
+                    hidden_states=image[index : index + 1],
+                    encoder_hidden_states=context[index : index + 1],
+                    timestep=timestep[index : index + 1],
+                    img_ids=image_ids,
+                    txt_ids=text_ids,
+                    guidance=None,
+                ).sample
+                if (
+                    sample.ndim != 3
+                    or sample.shape[0] != 1
+                    or sample.shape[1] != image.shape[1]
+                    or sample.shape[2] != self.in_channels * self.patch_size**2
+                ):
+                    raise ValueError(
+                        "Nunchaku FLUX.2 returned an unsafe reference-edit "
+                        "token layout: expected "
+                        f"[1, {image.shape[1]}, "
+                        f"{self.in_channels * self.patch_size**2}], got "
+                        f"{list(sample.shape)}."
+                    )
+                outputs.append(sample[:, :generated_tokens])
             output = torch.cat(outputs, dim=0)
             return self._unpack_latents(
                 output,
