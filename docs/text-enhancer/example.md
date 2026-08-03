@@ -9,7 +9,7 @@ CLIP Text Encode (positive)
         ↓
 Nunchaku FLUX.2 Klein Text Enhancer
         ↓
-Multi Reference Latent          [only for image editing]
+Reference Latent          [only for image editing]
         ↓
 KSampler / CFG Guider positive
 ```
@@ -33,12 +33,12 @@ CLIP Text Encode
     ↓
 Text Enhancer
     ↓
-Multi Reference Latent
+Reference Latent
     ↓
 Sampler positive
 ```
 
-Putting the enhancer **before** `Multi Reference Latent` is conceptually cleaner: it modifies only the text-conditioning tensor, while the later node attaches reference latents as metadata. The enhancer itself preserves conditioning metadata and changes only the active token slice. 
+Putting the enhancer **before** `Reference Latent` is conceptually cleaner: it modifies only the text-conditioning tensor, while the later node attaches reference latents as metadata. The enhancer itself preserves conditioning metadata and changes only the active token slice. 
 
 ## Negative conditioning
 
@@ -197,19 +197,6 @@ C: magnitude 2.0
 D: magnitude 1.5, contrast 1.0, normalize 0.75
 ```
 
-Everything downstream must stay identical.
-
-Do not compare outputs generated with:
-
-* different prompts;
-* different seeds;
-* changed reference order;
-* different LoRA state;
-* different resolution;
-* different sampler schedules.
-
-Those variables can overwhelm the conditioning change.
-
 ---
 
 ## Test each control independently
@@ -226,23 +213,3 @@ After the initial check, isolate each parameter:
 | Full normalization |       1.0 |      0.0 |       1.0 |
 
 This makes it possible to diagnose a single control rather than interpreting three transformations at once.
-
-## What to look for in the console
-
-With `debug=true`, expect messages resembling:
-
-```text
-Text Enhancer item 0: active tokens [1:N], initial mean norm ...
-Text Enhancer item 0: final mean norm ...
-```
-
-With typical masked Qwen conditioning, `N` is derived from the last nonzero position in `attention_mask`. Without a valid two-dimensional mask—or with an all-zero mask—the compatibility node preserves the original node’s legacy fallback of up to 77 tokens. 
-
-The first practical validation should therefore be:
-
-1. Confirm the node appears under
-   `Nunchaku/FLUX.2 Klein/Enhancer/Text`.
-2. Run neutral with debug enabled.
-3. Run `magnitude=2.0`.
-4. Verify the final logged mean norm changes substantially.
-5. Compare decoded outputs only after confirming the tensor transform executed.
