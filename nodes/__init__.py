@@ -3,6 +3,7 @@ from .klein_lora import NunchakuKleinLoraLoader
 from .enhancer import (
     NunchakuKleinMaskReferenceController,
     NunchakuKleinMultiReferenceLatent,
+    NunchakuKleinTextEnhancer,
 )
 
 
@@ -11,4 +12,5 @@ __all__ = [
     "NunchakuKleinMaskReferenceController",
     "NunchakuKleinModelLoader",
     "NunchakuKleinMultiReferenceLatent",
+    "NunchakuKleinTextEnhancer",
 ]

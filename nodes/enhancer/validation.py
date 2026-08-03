@@ -75,8 +75,15 @@ def validate_int_range(value, *, name, minimum, maximum):
     return value
 
 
+def validate_bool(value, *, name):
+    if not isinstance(value, bool):
+        raise TypeError(f"{name} must be a boolean.")
+    return value
+
+
 __all__ = [
     "validate_bchw_tensor",
+    "validate_bool",
     "validate_conditioning",
     "validate_finite_range",
     "validate_int_range",
