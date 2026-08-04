@@ -1,0 +1,36 @@
+[project]
+name = "nunchaku-klein"
+description = "ComfyUI custom node for Nunchaku Flux.2 Klein, independent of official ComyUI-Nunchaku. Added features such as Klein Enhancer modified to work with Nunchaku."
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+
+classifiers = [
+#     # For OS-independent nodes (works on all operating systems)
+#     "Operating System :: OS Independent",
+#
+#     # OR for OS-specific nodes, specify the supported systems:
+    "Operating System :: Microsoft :: Windows",  # Windows specific
+    "Operating System :: POSIX :: Linux",  # Linux specific
+#     "Operating System :: MacOS",  # macOS specific
+#
+#     # GPU Accelerator support. Pick the ones that are supported by your extension.
+    "Environment :: GPU :: NVIDIA CUDA",    # NVIDIA CUDA support
+#     "Environment :: GPU :: AMD ROCm",       # AMD ROCm support
+#     "Environment :: GPU :: Intel Arc",      # Intel Arc support
+#     "Environment :: NPU :: Huawei Ascend",  # Huawei Ascend support
+#     "Environment :: GPU :: Apple Metal",    # Apple Metal support
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein"
+#  Used by Comfy Registry https://registry.comfy.org
+Documentation = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein/wiki"
+"Bug Tracker" = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein/issues"
+
+[tool.comfy]
+PublisherId = "user20260804"
+DisplayName = "ComfyUI-Nunchaku-Klein"
+Icon = ""
+includes = []
+"requires-comfyui" = ">=0.29.0"  # ComfyUI version compatibility
