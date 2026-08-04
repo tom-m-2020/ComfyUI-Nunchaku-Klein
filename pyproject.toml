@@ -29,7 +29,7 @@ Documentation = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein/wiki"
 "Bug Tracker" = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein/issues"
 
 [tool.comfy]
-PublisherId = "user20260804"
+PublisherId = "tom-m"
 DisplayName = "ComfyUI-Nunchaku-Klein"
 Icon = ""
 includes = []
