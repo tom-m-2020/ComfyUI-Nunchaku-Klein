@@ -1,7 +1,7 @@
 [project]
 name = "nunchaku-klein"
-description = "ComfyUI custom node for Nunchaku Flux.2 Klein, independent of official ComyUI-Nunchaku. Added features such as Klein Enhancer modified to work with Nunchaku."
-version = "0.1.0"
+description = "ComfyUI custom node for Nunchaku Flux.2 Klein, independent of official ComyUI-Nunchaku. Added features such as Klein Enhancer modified to work with Nunchaku. NOTE: Some of Enhancer nodes are still not implemented yet. Check README for details."
+version = "0.2.0"
 license = "GPL-3.0-or-later"
 
 classifiers = [

@@ -4,6 +4,8 @@ ComfyUI custom node for **Nunchaku Flux.2 Klein**, independent of official [Comy
 Added features such as **Klein Enhancer** modified to work with Nunchaku.
 
 ## News
+- **2026-08-05** **v0.2.0**
+  - Klein Enhancer node. (experimental)
 - **2026-08-04**
   - Foundation and basic functionalities for **9B** have been mostly complete.
   - **LoRA** support
@@ -17,7 +19,7 @@ Added features such as **Klein Enhancer** modified to work with Nunchaku.
 - [x] 9B basic support
 - [x] LoRA support
 - [x] Reference Edit support
-- [ ] Klein Enhancer
+- [x] Klein Enhancer (partially)
 - [ ] Test noise mask and Differential Diffusion
 - [ ] Test Normalized Attention Guidance
 - [ ] 4B support
