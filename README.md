@@ -1,7 +1,16 @@
 # ComfyUI-Nunchaku-Klein
 
 ComfyUI custom node for **Nunchaku Flux.2 Klein**, independent of official [ComyUI-Nunchaku](https://github.com/nunchaku-ai/nunchaku).
-Added features such as **Klein Enhancer** modified to work with Nunchaku.
+Added features such as **Klein Enhancer** ported to work on Nunchaku.
+
+> **NOTE**: some of the Enhancer nodes are not implemented yet. They appear in node list, but they won't work.
+> 
+> What's supported now:
+> - Text Enhancer
+> - Enhancer
+> 
+> What's NOT supported:
+> - All the other Enhancer related nodes
 
 ## News
 - **2026-08-05** **v0.2.0**
