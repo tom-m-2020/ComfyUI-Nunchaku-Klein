@@ -8,13 +8,18 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
 > What's supported now:
 > - Text Enhancer
 > - Enhancer
+> - Sectioned Encoder
+> - Detail Controller
 > 
 > What's NOT supported:
 > - All the other Enhancer related nodes
 
 ## News
+- **2026-08-06** **v0.3.0**
+  - **Sectioned Encoder**
+  - **Detail Controller**
 - **2026-08-05** **v0.2.0**
-  - Klein Enhancer node. (experimental)
+  - **Klein Enhancer** node. (experimental)
 - **2026-08-04**
   - Foundation and basic functionalities for **9B** have been mostly complete.
   - **LoRA** support
