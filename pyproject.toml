@@ -12,10 +12,10 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Repository = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein"
+Repository = "https://github.com/tom-m-2020/ComfyUI-Nunchaku-Klein"
 #  Used by Comfy Registry https://registry.comfy.org
-Documentation = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein/wiki"
-"Bug Tracker" = "https://github.com/Tom-M-Git/ComfyUI-Nunchaku-Klein/issues"
+Documentation = "https://github.com/tom-m-2020/ComfyUI-Nunchaku-Klein/wiki"
+"Bug Tracker" = "https://github.com/tom-m-2020/ComfyUI-Nunchaku-Klein/issues"
 
 [tool.comfy]
 PublisherId = "tom-m"
