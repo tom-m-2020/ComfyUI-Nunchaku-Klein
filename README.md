@@ -10,11 +10,14 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
 > - Enhancer
 > - Sectioned Encoder
 > - Detail Controller
+> - Color Anchor
 > 
 > What's NOT supported:
 > - All the other Enhancer related nodes
 
 ## News
+- **2026-08-08** **v0.4.0**
+  - **Color Anchor**
 - **2026-08-06** **v0.3.0**
   - **Sectioned Encoder**
   - **Detail Controller**

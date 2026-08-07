@@ -1,5 +1,6 @@
 """Registration surface for target-owned Enhancer compatibility nodes."""
 
+from .color_anchor import NunchakuKleinColorAnchor
 from .klein_enhancer import NunchakuKleinEnhancer
 from .detail_controller import NunchakuKleinDetailController
 from .mask_reference import NunchakuKleinMaskReferenceController
@@ -9,6 +10,7 @@ from .text_enhancer import NunchakuKleinTextEnhancer
 
 
 NODE_CLASS_MAPPINGS = {
+    "NunchakuKleinColorAnchor": NunchakuKleinColorAnchor,
     "NunchakuKleinEnhancer": NunchakuKleinEnhancer,
     "NunchakuKleinDetailController": NunchakuKleinDetailController,
     "NunchakuKleinMaskReferenceController": NunchakuKleinMaskReferenceController,
@@ -18,6 +20,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "NunchakuKleinColorAnchor": "Nunchaku FLUX.2 Klein Color Anchor",
     "NunchakuKleinEnhancer": "Nunchaku FLUX.2 Klein Enhancer",
     "NunchakuKleinDetailController": "Nunchaku FLUX.2 Klein Detail Controller",
     "NunchakuKleinMaskReferenceController": (
@@ -35,6 +38,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 __all__ = [
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
+    "NunchakuKleinColorAnchor",
     "NunchakuKleinEnhancer",
     "NunchakuKleinDetailController",
     "NunchakuKleinMaskReferenceController",
