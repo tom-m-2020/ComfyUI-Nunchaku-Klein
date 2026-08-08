@@ -6,6 +6,7 @@ from .enhancer import (
     NunchakuKleinDetailController,
     NunchakuKleinMaskReferenceController,
     NunchakuKleinMultiReferenceLatent,
+    NunchakuKleinRefLatentWeight,
     NunchakuKleinSectionedEncoder,
     NunchakuKleinTextEnhancer,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "NunchakuKleinMaskReferenceController",
     "NunchakuKleinModelLoader",
     "NunchakuKleinMultiReferenceLatent",
+    "NunchakuKleinRefLatentWeight",
     "NunchakuKleinSectionedEncoder",
     "NunchakuKleinTextEnhancer",
 ]
