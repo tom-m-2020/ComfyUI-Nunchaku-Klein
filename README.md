@@ -3,7 +3,7 @@
 ComfyUI custom node for **Nunchaku Flux.2 Klein**, independent of official [ComyUI-Nunchaku](https://github.com/nunchaku-ai/nunchaku).
 Added features such as **Klein Enhancer** ported to work on Nunchaku.
 
-> **NOTE**: Some of the Enhancer nodes are not implemented yet. They appear in node list, but they won't work.
+> **NOTE**: Some of the Enhancer nodes are not implemented yet.
 > 
 > What's supported now:
 > - Text Enhancer
@@ -11,12 +11,16 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
 > - Sectioned Encoder
 > - Detail Controller
 > - Color Anchor
+> - Mask Ref Controller
+> - Multi Reference Latent
 > 
 > What's NOT supported:
 > - All the other Enhancer related nodes
 
 ## News
-- **2026-08-08** **v0.4.0**
+- **2026-08-08** **v0.4.1**
+  - **Multi Reference Latent**
+  - **Mask Ref Controller**
   - **Color Anchor**
 - **2026-08-06** **v0.3.0**
   - **Sectioned Encoder**

@@ -1,7 +1,7 @@
 [project]
 name = "nunchaku-klein"
 description = "NOTE: Some of Enhancer nodes are still not implemented yet. Check README for details. ComfyUI custom node for Nunchaku Flux.2 Klein, independent of official ComyUI-Nunchaku. Requires tonera's Vitoom Nunchaku. Added features such as Klein Enhancer ported."
-version = "0.4.0"
+version = "0.4.1"
 license = {file = "LICENSE"}
 
 classifiers = [
