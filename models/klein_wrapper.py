@@ -744,7 +744,18 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         # switch physical LoRA state during this logical adapter forward.
         with self.shared_lora_state.lock:
             self.shared_lora_state.ensure(desired)
+            logger.debug(
+                "Ref Latent Weight: desired_loras=%d active_identity=%s",
+                len(desired),
+                self.shared_lora_state.active_identity,
+            )
             def predict(references: list[torch.Tensor] | None) -> torch.Tensor:
+                logger.debug(
+                    "predict(): batch=%d refs=%d generated_tokens=%d",
+                    batch,
+                    0 if references is None else len(references),
+                    generated_tokens,
+                )
                 hidden_states, img_ids = self._pack_reference_latents(
                     x, image, image_ids, references
                 )
@@ -780,19 +791,59 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     outputs.append(sample[:, :generated_tokens])
                 return torch.cat(outputs, dim=0)
 
-            if ref_weight_spec is None or ref_weight_spec.weight == 1.0:
+
+            if ref_weight_spec is None:
+                logger.debug(
+                    "Ref Latent Weight: no spec; path=ordinary refs=%d",
+                    0 if ref_latents is None else len(ref_latents),
+                )
                 output = predict(ref_latents)
+
+            elif ref_weight_spec.weight == 1.0:
+                logger.info(
+                    "Ref Latent Weight: index=%d weight=1.000 path=full-reference one-pass",
+                    ref_weight_spec.reference_index,
+                )
+                output = predict(ref_latents)
+
             else:
                 remaining = [
                     reference
                     for index, reference in enumerate(ref_latents)
                     if index != ref_weight_spec.reference_index
                 ]
+
+                logger.debug(
+                    "Ref Latent Weight: index=%d weight=%.3f pass=WITHOUT selected "
+                    "refs=%d->%d",
+                    ref_weight_spec.reference_index,
+                    ref_weight_spec.weight,
+                    len(ref_latents),
+                    len(remaining),
+                )
                 without_selected = predict(remaining or None)
+
                 if ref_weight_spec.weight == 0.0:
+                    logger.info(
+                        "Ref Latent Weight: index=%d weight=0.000 path=ablation one-pass",
+                        ref_weight_spec.reference_index,
+                    )
                     output = without_selected
                 else:
+                    logger.debug(
+                        "Ref Latent Weight: index=%d weight=%.3f pass=WITH selected refs=%d",
+                        ref_weight_spec.reference_index,
+                        ref_weight_spec.weight,
+                        len(ref_latents),
+                    )
                     with_selected = predict(ref_latents)
+
+                    logger.debug(
+                        "Ref Latent Weight: index=%d weight=%.3f combine=prediction-residual",
+                        ref_weight_spec.reference_index,
+                        ref_weight_spec.weight,
+                    )
+
                     output = (
                         without_selected.float()
                         + ref_weight_spec.weight

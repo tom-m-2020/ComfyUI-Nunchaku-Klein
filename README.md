@@ -13,11 +13,14 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
 > - Color Anchor
 > - Mask Ref Controller
 > - Multi Reference Latent
+> - Ref Latent Weight
 > 
 > What's NOT supported:
 > - All the other Enhancer related nodes
 
 ## News
+- **2026-08-09** **v0.5.0**
+  - **Ref Latent Weight**
 - **2026-08-08** **v0.4.1**
   - **Multi Reference Latent**
   - **Mask Ref Controller**
@@ -34,6 +37,8 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
   - First experimental implementation of **Klein Text Enhancer** node.
     - **NOTE**: Our "Enhancer" nodes **do not work exactly the same as the [original Flux2Klein-Enhancer](https://github.com/capitan01R/ComfyUI-Flux2Klein-Enhancer)**, but the behavior is close. Still experimental.
   - **4B not supported yet**.
+
+**Observed**: repeated Nunchaku FLUX.2 Klein executions can produce materially different outputs despite identical workflow inputs and seed. This also reproduces in plain T2I without references, Ref Latent Weight, or LoRA, so it is not specific to those target features.
 
 ## Todos:
 
