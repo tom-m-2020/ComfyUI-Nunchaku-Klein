@@ -1,7 +1,7 @@
 # ComfyUI-Nunchaku-Klein
 
 ComfyUI custom node for **Nunchaku Flux.2 Klein**, independent of official [ComyUI-Nunchaku](https://github.com/nunchaku-ai/nunchaku).
-Added features such as **Klein Enhancer** ported to work on Nunchaku.
+Added features such as **Klein Enhancer** ported + compatibility version to work on Nunchaku (not identical).
 
 > **NOTE**: Some of the Enhancer nodes are not implemented yet.
 > 
@@ -14,13 +14,18 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
 > - Mask Ref Controller
 > - Multi Reference Latent
 > - Ref Latent Weight
+> - Text/Ref Balance
 > 
 > What's NOT supported:
-> - All the other Enhancer related nodes
+> - Identity Guidance
+> - Identity Feature Transfer
 
 ## News
-- **2026-08-09** **v0.5.0**
-  - **Ref Latent Weight**
+- **2026-08-09**
+  - **v0.6.0**
+    - **Text/Ref Balance** (not perfect, experimental. Use `0.50-1.00` in `balance`.)
+  - **v0.5.0**
+    - **Ref Latent Weight**
 - **2026-08-08** **v0.4.1**
   - **Multi Reference Latent**
   - **Mask Ref Controller**
@@ -29,7 +34,7 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
   - **Sectioned Encoder**
   - **Detail Controller**
 - **2026-08-05** **v0.2.0**
-  - **Klein Enhancer** node. (experimental)
+  - **Klein Enhancer**
 - **2026-08-04**
   - Foundation and basic functionalities for **9B** have been mostly complete.
   - **LoRA** support
@@ -46,8 +51,8 @@ Added features such as **Klein Enhancer** ported to work on Nunchaku.
 - [x] LoRA support
 - [x] Reference Edit support
 - [x] Klein Enhancer (partially)
-- [ ] Test noise mask and Differential Diffusion
-- [ ] Test Normalized Attention Guidance
+- [ ] Test Differential Diffusion / if not: SpotEdit
+- [ ] ~~Test Normalized Attention Guidance~~
 - [ ] 4B support
 
 ## Installation
