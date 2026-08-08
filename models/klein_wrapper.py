@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 LORA_SPEC_OPTION = "nunchaku_klein_lora_spec"
 REF_LATENT_WEIGHT_OPTION = "nunchaku_klein_ref_latent_weight"
+TEXT_REF_BALANCE_OPTION = "nunchaku_klein_text_ref_balance"
 _SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
 # ComfyUI 0.29's Flux2 detection and Diffusers' Klein pipeline both separate
 # reference images on RoPE axis 0 with indices 10, 20, ... .
@@ -60,6 +61,14 @@ class KleinRefLatentWeightSpec:
 
     reference_index: int
     weight: float
+
+
+@dataclass(frozen=True)
+class KleinTextRefBalanceSpec:
+    """Prediction-space substitute for unavailable text/reference K/V scaling."""
+
+    balance: float
+    debug: bool
 
 
 class KleinLoraPreparationCache:
@@ -739,6 +748,29 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     f"{len(ref_latents)} runtime references."
                 )
 
+        text_ref_spec = None
+        if transformer_options is not None:
+            text_ref_spec = transformer_options.get(TEXT_REF_BALANCE_OPTION)
+        if text_ref_spec is not None and not isinstance(
+            text_ref_spec, KleinTextRefBalanceSpec
+        ):
+            raise TypeError(
+                f"{TEXT_REF_BALANCE_OPTION} must contain "
+                "KleinTextRefBalanceSpec."
+            )
+        if text_ref_spec is not None:
+            if ref_weight_spec is not None:
+                raise ValueError(
+                    "Nunchaku FLUX.2 Klein Text/Ref Balance cannot be used "
+                    "together with Ref Latent Weight in this release. Remove "
+                    "one node; prediction-residual composition is not defined."
+                )
+            if not isinstance(ref_latents, list) or not ref_latents:
+                raise ValueError(
+                    "Nunchaku FLUX.2 Klein Text/Ref Balance requires a "
+                    "non-empty runtime reference list."
+                )
+
         # The transformer weights are shared by ModelPatcher clones. Keep the
         # lock through every serialized CFG/batch call so no sibling branch can
         # switch physical LoRA state during this logical adapter forward.
@@ -749,24 +781,29 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                 len(desired),
                 self.shared_lora_state.active_identity,
             )
-            def predict(references: list[torch.Tensor] | None) -> torch.Tensor:
+
+            def predict(
+                references: list[torch.Tensor] | None,
+                effective_context: torch.Tensor,
+            ) -> torch.Tensor:
                 logger.debug(
-                    "predict(): batch=%d refs=%d generated_tokens=%d",
+                    "predict(): batch=%d refs=%d generated_tokens=%d zero_context=%s",
                     batch,
                     0 if references is None else len(references),
                     generated_tokens,
+                    effective_context is not context,
                 )
                 hidden_states, img_ids = self._pack_reference_latents(
                     x, image, image_ids, references
                 )
                 self._validate_transformer_inputs(
-                    hidden_states, context, timestep, img_ids, text_ids
+                    hidden_states, effective_context, timestep, img_ids, text_ids
                 )
                 outputs = []
                 for index in range(batch):
                     sample = self.transformer(
                         hidden_states=hidden_states[index : index + 1],
-                        encoder_hidden_states=context[index : index + 1],
+                        encoder_hidden_states=effective_context[index : index + 1],
                         timestep=timestep[index : index + 1],
                         img_ids=img_ids,
                         txt_ids=text_ids,
@@ -791,20 +828,82 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     outputs.append(sample[:, :generated_tokens])
                 return torch.cat(outputs, dim=0)
 
+            if text_ref_spec is not None:
+                balance = text_ref_spec.balance
+                if balance == 0.0:
+                    if text_ref_spec.debug:
+                        logger.info(
+                            "Text/Ref Balance: balance=0.000 side=reference-favored "
+                            "path=REF_PROXY one-pass"
+                        )
+                    logger.debug("Text/Ref Balance: pass=REF_PROXY")
+                    output = predict(ref_latents, torch.zeros_like(context))
+                elif balance == 0.5:
+                    if text_ref_spec.debug:
+                        logger.info(
+                            "Text/Ref Balance: balance=0.500 side=neutral "
+                            "path=FULL one-pass"
+                        )
+                    logger.debug("Text/Ref Balance: pass=FULL")
+                    output = predict(ref_latents, context)
+                elif balance == 1.0:
+                    if text_ref_spec.debug:
+                        logger.info(
+                            "Text/Ref Balance: balance=1.000 side=text-favored "
+                            "path=TEXT_ONLY one-pass"
+                        )
+                    logger.debug("Text/Ref Balance: pass=TEXT_ONLY")
+                    output = predict(None, context)
+                elif balance < 0.5:
+                    alpha = 2.0 * balance
+                    if text_ref_spec.debug:
+                        logger.info(
+                            "Text/Ref Balance: balance=%.3f "
+                            "side=reference-favored mode=prediction-residual",
+                            balance,
+                        )
+                    logger.debug("Text/Ref Balance: pass=REF_PROXY")
+                    reference_proxy = predict(
+                        ref_latents, torch.zeros_like(context)
+                    )
+                    logger.debug("Text/Ref Balance: pass=FULL")
+                    full = predict(ref_latents, context)
+                    logger.debug("Text/Ref Balance: combine alpha=%.6f", alpha)
+                    output = (
+                        reference_proxy.float()
+                        + alpha * (full.float() - reference_proxy.float())
+                    ).to(dtype=full.dtype)
+                else:
+                    alpha = 2.0 * (1.0 - balance)
+                    if text_ref_spec.debug:
+                        logger.info(
+                            "Text/Ref Balance: balance=%.3f side=text-favored "
+                            "mode=prediction-residual",
+                            balance,
+                        )
+                    logger.debug("Text/Ref Balance: pass=TEXT_ONLY")
+                    text_only = predict(None, context)
+                    logger.debug("Text/Ref Balance: pass=FULL")
+                    full = predict(ref_latents, context)
+                    logger.debug("Text/Ref Balance: combine alpha=%.6f", alpha)
+                    output = (
+                        text_only.float()
+                        + alpha * (full.float() - text_only.float())
+                    ).to(dtype=full.dtype)
 
-            if ref_weight_spec is None:
+            elif ref_weight_spec is None:
                 logger.debug(
                     "Ref Latent Weight: no spec; path=ordinary refs=%d",
                     0 if ref_latents is None else len(ref_latents),
                 )
-                output = predict(ref_latents)
+                output = predict(ref_latents, context)
 
             elif ref_weight_spec.weight == 1.0:
                 logger.info(
                     "Ref Latent Weight: index=%d weight=1.000 path=full-reference one-pass",
                     ref_weight_spec.reference_index,
                 )
-                output = predict(ref_latents)
+                output = predict(ref_latents, context)
 
             else:
                 remaining = [
@@ -821,7 +920,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     len(ref_latents),
                     len(remaining),
                 )
-                without_selected = predict(remaining or None)
+                without_selected = predict(remaining or None, context)
 
                 if ref_weight_spec.weight == 0.0:
                     logger.info(
@@ -836,7 +935,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                         ref_weight_spec.weight,
                         len(ref_latents),
                     )
-                    with_selected = predict(ref_latents)
+                    with_selected = predict(ref_latents, context)
 
                     logger.debug(
                         "Ref Latent Weight: index=%d weight=%.3f combine=prediction-residual",

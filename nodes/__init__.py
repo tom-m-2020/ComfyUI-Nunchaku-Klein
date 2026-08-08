@@ -9,6 +9,7 @@ from .enhancer import (
     NunchakuKleinRefLatentWeight,
     NunchakuKleinSectionedEncoder,
     NunchakuKleinTextEnhancer,
+    NunchakuKleinTextRefBalance,
 )
 
 
@@ -23,4 +24,5 @@ __all__ = [
     "NunchakuKleinRefLatentWeight",
     "NunchakuKleinSectionedEncoder",
     "NunchakuKleinTextEnhancer",
+    "NunchakuKleinTextRefBalance",
 ]

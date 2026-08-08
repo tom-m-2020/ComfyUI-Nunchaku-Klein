@@ -2,6 +2,7 @@ from ...models.klein_wrapper import (
     KleinRefLatentWeightSpec,
     NunchakuFlux2KleinAdapter,
     REF_LATENT_WEIGHT_OPTION,
+    TEXT_REF_BALANCE_OPTION,
 )
 from .common import REFERENCE_CATEGORY
 from .validation import validate_finite_range, validate_int_range
@@ -61,6 +62,12 @@ class NunchakuKleinRefLatentWeight:
             raise ValueError(
                 "Only one active Nunchaku FLUX.2 Klein Ref Latent Weight "
                 "specification is supported per MODEL branch."
+            )
+        if transformer_options.get(TEXT_REF_BALANCE_OPTION) is not None:
+            raise ValueError(
+                "Nunchaku FLUX.2 Klein Ref Latent Weight cannot be stacked "
+                "with Text/Ref Balance in this release. Remove one node; "
+                "prediction-residual composition is not defined."
             )
 
         branch = model.clone()
