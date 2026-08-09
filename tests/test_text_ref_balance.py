@@ -154,7 +154,7 @@ class TextRefBalanceTests(unittest.TestCase):
         self.assertEqual(list(inputs["optional"]), ["debug"])
         self.assertEqual(
             inputs["required"]["balance"],
-            ("FLOAT", {"default": 0.500, "min": 0.000, "max": 1.000, "step": 0.001}),
+            ("FLOAT", {"default": 0.500, "min": 0.000, "max": 1.000, "step": 0.005}),
         )
         self.assertEqual(inputs["optional"]["debug"], ("BOOLEAN", {"default": False}))
 

@@ -3,6 +3,7 @@
 from .color_anchor import NunchakuKleinColorAnchor
 from .klein_enhancer import NunchakuKleinEnhancer
 from .detail_controller import NunchakuKleinDetailController
+from .identity_guidance import NunchakuKleinIdentityGuidance
 from .mask_reference import NunchakuKleinMaskReferenceController
 from .multi_reference import NunchakuKleinMultiReferenceLatent
 from .ref_latent_weight import NunchakuKleinRefLatentWeight
@@ -15,6 +16,7 @@ NODE_CLASS_MAPPINGS = {
     "NunchakuKleinColorAnchor": NunchakuKleinColorAnchor,
     "NunchakuKleinEnhancer": NunchakuKleinEnhancer,
     "NunchakuKleinDetailController": NunchakuKleinDetailController,
+    "NunchakuKleinIdentityGuidance": NunchakuKleinIdentityGuidance,
     "NunchakuKleinMaskReferenceController": NunchakuKleinMaskReferenceController,
     "NunchakuKleinMultiReferenceLatent": NunchakuKleinMultiReferenceLatent,
     "NunchakuKleinRefLatentWeight": NunchakuKleinRefLatentWeight,
@@ -27,6 +29,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "NunchakuKleinColorAnchor": "Nunchaku FLUX.2 Klein Color Anchor",
     "NunchakuKleinEnhancer": "Nunchaku FLUX.2 Klein Enhancer",
     "NunchakuKleinDetailController": "Nunchaku FLUX.2 Klein Detail Controller",
+    "NunchakuKleinIdentityGuidance": "Nunchaku FLUX.2 Klein Identity Guidance",
     "NunchakuKleinMaskReferenceController": (
         "Nunchaku FLUX.2 Klein Mask Ref Controller"
     ),
@@ -49,6 +52,7 @@ __all__ = [
     "NunchakuKleinColorAnchor",
     "NunchakuKleinEnhancer",
     "NunchakuKleinDetailController",
+    "NunchakuKleinIdentityGuidance",
     "NunchakuKleinMaskReferenceController",
     "NunchakuKleinMultiReferenceLatent",
     "NunchakuKleinRefLatentWeight",
