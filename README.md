@@ -15,9 +15,9 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > - Multi Reference Latent
 > - Ref Latent Weight
 > - Text/Ref Balance
+> - Identity Guidance (only for experiments, not productive)
 > 
 > What's NOT supported:
-> - Identity Guidance
 > - Identity Feature Transfer
 
 ## News
