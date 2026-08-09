@@ -1,4 +1,6 @@
 from .klein_wrapper import (
+    ATTENTION_CALLBACKS_OPTION,
+    Flux2AttentionCallbacks,
     KleinLoraSpec,
     LORA_SPEC_OPTION,
     NunchakuFlux2KleinAdapter,
@@ -7,6 +9,8 @@ from .klein_wrapper import (
 
 
 __all__ = [
+    "ATTENTION_CALLBACKS_OPTION",
+    "Flux2AttentionCallbacks",
     "KleinLoraSpec",
     "LORA_SPEC_OPTION",
     "NunchakuFlux2KleinAdapter",

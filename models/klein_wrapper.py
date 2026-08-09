@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 LORA_SPEC_OPTION = "nunchaku_klein_lora_spec"
 REF_LATENT_WEIGHT_OPTION = "nunchaku_klein_ref_latent_weight"
 TEXT_REF_BALANCE_OPTION = "nunchaku_klein_text_ref_balance"
+ATTENTION_CALLBACKS_OPTION = "nunchaku_flux2_attention_callbacks"
 _SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
 # ComfyUI 0.29's Flux2 detection and Diffusers' Klein pipeline both separate
 # reference images on RoPE axis 0 with indices 10, 20, ... .
@@ -69,6 +70,24 @@ class KleinTextRefBalanceSpec:
 
     balance: float
     debug: bool
+
+
+@dataclass(frozen=True)
+class Flux2AttentionCallbacks:
+    """Branch-local generic callbacks consumed by a capable Nunchaku backend."""
+
+    pre_attention_callbacks: tuple = ()
+    post_attention_callbacks: tuple = ()
+
+    def __post_init__(self) -> None:
+        for name, callbacks in (
+            ("pre_attention_callbacks", self.pre_attention_callbacks),
+            ("post_attention_callbacks", self.post_attention_callbacks),
+        ):
+            if not isinstance(callbacks, tuple):
+                raise TypeError(f"{name} must be an immutable tuple.")
+            if not all(callable(callback) for callback in callbacks):
+                raise TypeError(f"{name} must contain only callables.")
 
 
 class KleinLoraPreparationCache:
@@ -599,9 +618,9 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         image: torch.Tensor,
         image_ids: torch.Tensor,
         ref_latents: list[torch.Tensor] | None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, ...]]:
         if ref_latents is None:
-            return image, image_ids
+            return image, image_ids, ()
         if not isinstance(ref_latents, list) or not ref_latents:
             raise TypeError(
                 "FLUX.2 Klein ref_latents must be a non-empty list of "
@@ -648,6 +667,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         return (
             torch.cat([image, *packed_references], dim=1),
             torch.cat([image_ids, *reference_ids], dim=0),
+            tuple(reference.shape[1] for reference in packed_references),
         )
 
     def forward(
@@ -771,6 +791,34 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     "non-empty runtime reference list."
                 )
 
+        attention_callbacks = None
+        if transformer_options is not None:
+            attention_callbacks = transformer_options.get(ATTENTION_CALLBACKS_OPTION)
+        if attention_callbacks is not None and not isinstance(
+            attention_callbacks, Flux2AttentionCallbacks
+        ):
+            raise TypeError(
+                f"{ATTENTION_CALLBACKS_OPTION} must contain Flux2AttentionCallbacks."
+            )
+        callbacks_active = attention_callbacks is not None and (
+            attention_callbacks.pre_attention_callbacks
+            or attention_callbacks.post_attention_callbacks
+        )
+        if callbacks_active:
+            try:
+                from nunchaku.models.transformers import transformer_flux2
+            except ImportError as error:
+                raise RuntimeError(
+                    "The installed Nunchaku backend cannot expose FLUX.2 attention callbacks."
+                ) from error
+            if getattr(
+                transformer_flux2, "FLUX2_ATTENTION_CALLBACK_API_VERSION", 0
+            ) < 1:
+                raise RuntimeError(
+                    "This MODEL branch requires Nunchaku FLUX.2 attention callback API v1. "
+                    "Install the qualified callback-capable backend derivative."
+                )
+
         # The transformer weights are shared by ModelPatcher clones. Keep the
         # lock through every serialized CFG/batch call so no sibling branch can
         # switch physical LoRA state during this logical adapter forward.
@@ -793,7 +841,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     generated_tokens,
                     effective_context is not context,
                 )
-                hidden_states, img_ids = self._pack_reference_latents(
+                hidden_states, img_ids, reference_token_counts = self._pack_reference_latents(
                     x, image, image_ids, references
                 )
                 self._validate_transformer_inputs(
@@ -801,6 +849,14 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                 )
                 outputs = []
                 for index in range(batch):
+                    joint_attention_kwargs = None
+                    if callbacks_active:
+                        joint_attention_kwargs = {
+                            "pre_attention_callbacks": attention_callbacks.pre_attention_callbacks,
+                            "post_attention_callbacks": attention_callbacks.post_attention_callbacks,
+                            "generated_token_count": generated_tokens,
+                            "reference_token_counts": reference_token_counts,
+                        }
                     sample = self.transformer(
                         hidden_states=hidden_states[index : index + 1],
                         encoder_hidden_states=effective_context[index : index + 1],
@@ -808,6 +864,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                         img_ids=img_ids,
                         txt_ids=text_ids,
                         guidance=None,
+                        joint_attention_kwargs=joint_attention_kwargs,
                     ).sample
                     if (
                         sample.ndim != 3
