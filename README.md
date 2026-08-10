@@ -22,7 +22,7 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > - Identity Feature Transfer
 
 ## News
-- **2026-08-11**
+- **2026-08-11** **v0.7.0**
   - **Ref Latent Weight (Direct K/V)**
     - **NOTE:** NEEDS NEW NUNCHAKU BACKEND. To use this node you'll need to reinstall nunchaku with our **"fork of the community-maintained Nunchaku"** that means, _Vitoom Nunchaku_ which is an extended version of nunchaku by _tonera_ has been **further extended** by me, which gives you **full control over Flux.2 Klein**.
 - **2026-08-09**
