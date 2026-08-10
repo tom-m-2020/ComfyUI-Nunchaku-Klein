@@ -11,6 +11,7 @@ from ..models.klein_wrapper import (
     LORA_SPEC_OPTION,
     NunchakuFlux2KleinAdapter,
 )
+from .klein_lora_normalization import normalize_klein_lora_state
 
 
 def _get_inherited_lora_specs(model) -> tuple[KleinLoraSpec, ...]:
@@ -86,14 +87,14 @@ class NunchakuKleinLoraLoader:
         if self.loaded_lora is not None and self.loaded_lora[0] == fingerprint:
             state_dict, metadata = self.loaded_lora[1:]
         else:
-            state_dict, metadata = comfy.utils.load_torch_file(
+            raw_state_dict, metadata = comfy.utils.load_torch_file(
                 str(lora_path),
                 safe_load=True,
                 return_metadata=True,
             )
-            if not state_dict:
+            if not raw_state_dict:
                 raise ValueError(f"LoRA {lora_path} contains no tensors.")
-            if not all(torch.is_tensor(tensor) for tensor in state_dict.values()):
+            if not all(torch.is_tensor(tensor) for tensor in raw_state_dict.values()):
                 raise ValueError(f"LoRA {lora_path} contains non-tensor weights.")
 
             base_model = (metadata or {}).get("ss_base_model_version")
@@ -104,6 +105,11 @@ class NunchakuKleinLoraLoader:
                         f"LoRA {lora_path} targets {base_model!r}, not "
                         "FLUX.2 Klein 9B."
                     )
+
+            try:
+                state_dict = normalize_klein_lora_state(raw_state_dict)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"LoRA {lora_path} is not supported: {error}") from error
 
             # Vitoom's parser is version-pinned private API, but it is the only
             # backend path that normalizes every supported Klein LoRA key format.
