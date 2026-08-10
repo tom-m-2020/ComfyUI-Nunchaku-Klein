@@ -16,11 +16,15 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > - Ref Latent Weight
 > - Text/Ref Balance
 > - Identity Guidance (only for experiments, not productive)
+> - Ref Latent Weight (Direct K/V)
 > 
 > What's NOT supported:
 > - Identity Feature Transfer
 
 ## News
+- **2026-08-11**
+  - **Ref Latent Weight (Direct K/V)**
+    - **NOTE:** NEEDS NEW NUNCHAKU BACKEND. To use this node you'll need to reinstall nunchaku with our **"fork of the community-maintained Nunchaku"** that means, _Vitoom Nunchaku_ which is an extended version of nunchaku by _tonera_ has been **further extended** by me, which gives you **full control over Flux.2 Klein**.
 - **2026-08-09**
   - **v0.6.0**
     - **Text/Ref Balance** (not perfect, experimental. Use `0.50-1.00` in `balance`.)
@@ -57,11 +61,35 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 
 ## Installation
 
+### Basic Usage
+
 1. **First you need to install [tonera's fork of nunchaku (Vitoom Nunchaku)](https://huggingface.co/tonera/vitoom-nunchaku)**. Choose the pre-built wheel matching your setup from their repository.
 2. Clone this repository.
 3. Download tonera's Nunchaku Klein model from their repository if you don't have one.
 
-**Tested with ComfyUI v0.29**. Older versions may not work.
+### Direct K/V
+
+If you want to use Ref Latent Weight (Direct K/V), Text/Ref Balance (Direct K/V) or Identity Feature Transfer:
+
+Either:
+- Install [my "fork of the fork" of nunchaku](https://github.com/tom-m-2020/vitoom-nunchaku-extended).
+- Use "repack" script in the repo to your chosen pre-built wheel (**if the version exactly match**.)
+  - If you use the repack script, they MUST match the exact variant of pre-built _Vitoom Nunchaku_ wheel as the source e.g.:
+    - If you have `nunchaku-1.3.0.dev20260629+cu13.0torch2.11-cp313-cp313-win_amd64`, you must use the script that targets `nunchaku-1.3.0.dev20260629+cu13.0torch2.11-cp313-cp313-win_amd64`.
+
+#### Currently supported wheels
+
+Only a limited number of versions are supported now.
+
+- `nunchaku-1.3.0.dev20260629+cu13.0torch2.11-cp313-cp313-win_amd64`
+
+### Environment
+
+**Tested with**:
+- **ComfyUI >=0.29**. Older versions may not work.
+- **Python 3.13**
+- **Torch 2.11**
+- **CUDA 13.0**
 
 ## Related Projects
 This project involves/is related to several third-party projects
