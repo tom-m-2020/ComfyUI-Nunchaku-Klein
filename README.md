@@ -83,6 +83,8 @@ Only a limited number of versions are supported now.
 
 - `nunchaku-1.3.0.dev20260629+cu13.0torch2.11-cp313-cp313-win_amd64`
 
+(Basic usage supports all the other versions, too.)
+
 ### Environment
 
 **Tested with**:
