@@ -5,24 +5,7 @@
 ComfyUI custom node for **Nunchaku Flux.2 Klein**, independent of official [ComyUI-Nunchaku](https://github.com/nunchaku-ai/nunchaku).
 Added features such as **Klein Enhancer** ported + compatibility version to work on Nunchaku (not identical).
 
-> **NOTE**: Some of the Enhancer nodes are not implemented yet.
-> 
-> What's supported now:
-> - Text Enhancer
-> - Enhancer
-> - Sectioned Encoder
-> - Detail Controller
-> - Color Anchor
-> - Mask Ref Controller
-> - Multi Reference Latent
-> - Ref Latent Weight
-> - Text/Ref Balance
-> - Identity Guidance (only for experiments, not productive)
-> - Ref Latent Weight (Direct K/V)
-> - Text/Ref Balance (Direct K/V)
-> 
-> What's NOT supported:
-> - Identity Feature Transfer
+> **NOTE**: In order to use "**Direct K/V**" nodes or **Identity Feature Transfer**, you'll have to install the newer fork of Vitoom Nunchaku.
 
 ## News
 - **2026-08-11**
