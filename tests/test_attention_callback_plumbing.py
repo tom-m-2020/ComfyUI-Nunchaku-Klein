@@ -22,6 +22,7 @@ spec.loader.exec_module(PACKAGE)
 from nunchaku_klein_attention_plumbing_test.models.klein_wrapper import (
     ATTENTION_CALLBACKS_OPTION,
     Flux2AttentionCallbacks,
+    IDENTITY_FEATURE_TRANSFER_FINAL_OPTION,
     NunchakuFlux2KleinAdapter,
     REF_LATENT_CONTROLLER_DIRECT_OPTION,
 )
@@ -130,6 +131,22 @@ class AttentionCallbackPlumbingTests(unittest.TestCase):
         options = {
             ATTENTION_CALLBACKS_OPTION: Flux2AttentionCallbacks((callback,), ()),
             REF_LATENT_CONTROLLER_DIRECT_OPTION: (callback,),
+        }
+        self.backend.FLUX2_ATTENTION_CALLBACK_API_VERSION = 1
+        with self.assertRaisesRegex(RuntimeError, "callback API v2"):
+            adapter(
+                torch.zeros((1, 2, 2, 3)),
+                torch.ones((1,)),
+                torch.zeros((1, 5, 4)),
+                transformer_options=options,
+            )
+
+    def test_identity_final_requires_spatial_metadata_api_v2(self):
+        adapter, _ = adapter_and_transformer()
+        callback = lambda *args: None
+        options = {
+            ATTENTION_CALLBACKS_OPTION: Flux2AttentionCallbacks((), (callback,)),
+            IDENTITY_FEATURE_TRANSFER_FINAL_OPTION: (callback,),
         }
         self.backend.FLUX2_ATTENTION_CALLBACK_API_VERSION = 1
         with self.assertRaisesRegex(RuntimeError, "callback API v2"):

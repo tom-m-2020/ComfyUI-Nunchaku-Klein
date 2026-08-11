@@ -3,32 +3,7 @@
 import torch
 
 
-def validate_attention_kv_layout(query, key, value, metadata, *, name):
-    tensors = {"query": query, "key": key, "value": value}
-    for tensor_name, tensor in tensors.items():
-        if not torch.is_tensor(tensor) or tensor.ndim != 4:
-            shape = None if not torch.is_tensor(tensor) else list(tensor.shape)
-            raise ValueError(
-                f"{name} {tensor_name} must be a rank-4 tensor, got {shape}."
-            )
-        if not tensor.is_contiguous():
-            raise ValueError(f"{name} {tensor_name} must be contiguous.")
-    if query.shape != key.shape or query.shape != value.shape:
-        raise ValueError(
-            f"{name} requires identical Q/K/V shapes, got "
-            f"Q={list(query.shape)}, K={list(key.shape)}, V={list(value.shape)}."
-        )
-    if query.dtype != key.dtype or query.dtype != value.dtype:
-        raise TypeError(
-            f"{name} requires identical Q/K/V dtypes, got "
-            f"Q={query.dtype}, K={key.dtype}, V={value.dtype}."
-        )
-    if query.device != key.device or query.device != value.device:
-        raise ValueError(
-            f"{name} requires identical Q/K/V devices, got "
-            f"Q={query.device}, K={key.device}, V={value.device}."
-        )
-
+def resolve_attention_token_ranges(metadata, packed_sequence_length, *, name):
     integer_fields = (
         "text_token_count",
         "generated_token_count",
@@ -64,9 +39,9 @@ def validate_attention_kv_layout(query, key, value, metadata, *, name):
             f"{name} logical image count is inconsistent: "
             f"{metadata.logical_image_token_count} != {expected_image}."
         )
-    if query.shape[2] != metadata.packed_sequence_length:
+    if packed_sequence_length != metadata.packed_sequence_length:
         raise ValueError(
-            f"{name} packed sequence mismatch: Q/K/V have {query.shape[2]} "
+            f"{name} packed sequence mismatch: tensor has {packed_sequence_length} "
             f"tokens but metadata reports {metadata.packed_sequence_length}."
         )
     if (
@@ -105,12 +80,40 @@ def validate_attention_kv_layout(query, key, value, metadata, *, name):
         reference_ranges.append((position, position + count))
         position += count
     logical_image_end = image_start + expected_image
-    if position != logical_image_end or logical_image_end > query.shape[2]:
+    if position != logical_image_end or logical_image_end > packed_sequence_length:
         raise ValueError(
             f"{name} logical image range [{image_start}, {logical_image_end}) "
-            f"is outside packed length {query.shape[2]}."
+            f"is outside packed length {packed_sequence_length}."
         )
     return (0, metadata.text_token_count), generated_range, tuple(reference_ranges)
 
 
-__all__ = ["validate_attention_kv_layout"]
+def validate_attention_kv_layout(query, key, value, metadata, *, name):
+    tensors = {"query": query, "key": key, "value": value}
+    for tensor_name, tensor in tensors.items():
+        if not torch.is_tensor(tensor) or tensor.ndim != 4:
+            shape = None if not torch.is_tensor(tensor) else list(tensor.shape)
+            raise ValueError(
+                f"{name} {tensor_name} must be a rank-4 tensor, got {shape}."
+            )
+        if not tensor.is_contiguous():
+            raise ValueError(f"{name} {tensor_name} must be contiguous.")
+    if query.shape != key.shape or query.shape != value.shape:
+        raise ValueError(
+            f"{name} requires identical Q/K/V shapes, got "
+            f"Q={list(query.shape)}, K={list(key.shape)}, V={list(value.shape)}."
+        )
+    if query.dtype != key.dtype or query.dtype != value.dtype:
+        raise TypeError(
+            f"{name} requires identical Q/K/V dtypes, got "
+            f"Q={query.dtype}, K={key.dtype}, V={value.dtype}."
+        )
+    if query.device != key.device or query.device != value.device:
+        raise ValueError(
+            f"{name} requires identical Q/K/V devices, got "
+            f"Q={query.device}, K={key.device}, V={value.device}."
+        )
+    return resolve_attention_token_ranges(metadata, query.shape[2], name=name)
+
+
+__all__ = ["resolve_attention_token_ranges", "validate_attention_kv_layout"]

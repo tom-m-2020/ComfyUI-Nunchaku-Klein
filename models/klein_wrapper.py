@@ -19,6 +19,7 @@ REF_LATENT_WEIGHT_OPTION = "nunchaku_klein_ref_latent_weight"
 TEXT_REF_BALANCE_OPTION = "nunchaku_klein_text_ref_balance"
 TEXT_REF_BALANCE_DIRECT_OPTION = "nunchaku_klein_text_ref_balance_direct"
 REF_LATENT_CONTROLLER_DIRECT_OPTION = "nunchaku_klein_ref_latent_controller_direct"
+IDENTITY_FEATURE_TRANSFER_FINAL_OPTION = "nunchaku_klein_identity_feature_transfer_final"
 ATTENTION_CALLBACKS_OPTION = "nunchaku_flux2_attention_callbacks"
 _SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
 # ComfyUI 0.29's Flux2 detection and Diffusers' Klein pipeline both separate
@@ -803,12 +804,16 @@ class NunchakuFlux2KleinAdapter(nn.Module):
 
         direct_text_ref_callbacks = None
         direct_ref_controller_callbacks = None
+        identity_feature_transfer_callbacks = None
         if transformer_options is not None:
             direct_text_ref_callbacks = transformer_options.get(
                 TEXT_REF_BALANCE_DIRECT_OPTION
             )
             direct_ref_controller_callbacks = transformer_options.get(
                 REF_LATENT_CONTROLLER_DIRECT_OPTION
+            )
+            identity_feature_transfer_callbacks = transformer_options.get(
+                IDENTITY_FEATURE_TRANSFER_FINAL_OPTION
             )
         if direct_text_ref_callbacks is not None:
             if not isinstance(direct_text_ref_callbacks, tuple) or not all(
@@ -831,6 +836,15 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             ):
                 raise TypeError(
                     f"{REF_LATENT_CONTROLLER_DIRECT_OPTION} must contain an "
+                    "immutable tuple of callables."
+                )
+
+        if identity_feature_transfer_callbacks is not None:
+            if not isinstance(identity_feature_transfer_callbacks, tuple) or not all(
+                callable(callback) for callback in identity_feature_transfer_callbacks
+            ):
+                raise TypeError(
+                    f"{IDENTITY_FEATURE_TRANSFER_FINAL_OPTION} must contain an "
                     "immutable tuple of callables."
                 )
             if ref_weight_spec is not None or text_ref_spec is not None:
@@ -860,7 +874,12 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                 raise RuntimeError(
                     "The installed Nunchaku backend cannot expose FLUX.2 attention callbacks."
                 ) from error
-            required_callback_api = 2 if direct_ref_controller_callbacks is not None else 1
+            required_callback_api = (
+                2
+                if direct_ref_controller_callbacks is not None
+                or identity_feature_transfer_callbacks is not None
+                else 1
+            )
             if getattr(
                 transformer_flux2, "FLUX2_ATTENTION_CALLBACK_API_VERSION", 0
             ) < required_callback_api:
