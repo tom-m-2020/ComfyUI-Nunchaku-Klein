@@ -11,6 +11,7 @@ from .ref_latent_weight_direct import NunchakuKleinRefLatentWeightDirectKV
 from .sectioned_encoder import NunchakuKleinSectionedEncoder
 from .text_enhancer import NunchakuKleinTextEnhancer
 from .text_ref_balance import NunchakuKleinTextRefBalance
+from .text_ref_balance_direct import NunchakuKleinTextRefBalanceDirectKV
 
 
 NODE_CLASS_MAPPINGS = {
@@ -25,6 +26,7 @@ NODE_CLASS_MAPPINGS = {
     "NunchakuKleinSectionedEncoder": NunchakuKleinSectionedEncoder,
     "NunchakuKleinTextEnhancer": NunchakuKleinTextEnhancer,
     "NunchakuKleinTextRefBalance": NunchakuKleinTextRefBalance,
+    "NunchakuKleinTextRefBalanceDirectKV": NunchakuKleinTextRefBalanceDirectKV,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -49,6 +51,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     ),
     "NunchakuKleinTextEnhancer": "Nunchaku FLUX.2 Klein Text Enhancer",
     "NunchakuKleinTextRefBalance": "Nunchaku FLUX.2 Klein Text/Ref Balance",
+    "NunchakuKleinTextRefBalanceDirectKV": (
+        "Nunchaku FLUX.2 Klein Text/Ref Balance (Direct K/V)"
+    ),
 }
 
 __all__ = [
@@ -65,4 +70,5 @@ __all__ = [
     "NunchakuKleinSectionedEncoder",
     "NunchakuKleinTextEnhancer",
     "NunchakuKleinTextRefBalance",
+    "NunchakuKleinTextRefBalanceDirectKV",
 ]

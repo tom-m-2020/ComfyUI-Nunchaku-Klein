@@ -4,6 +4,7 @@ from .klein_wrapper import (
     KleinLoraSpec,
     LORA_SPEC_OPTION,
     NunchakuFlux2KleinAdapter,
+    TEXT_REF_BALANCE_DIRECT_OPTION,
     calculate_live_model_size,
 )
 
@@ -14,5 +15,6 @@ __all__ = [
     "KleinLoraSpec",
     "LORA_SPEC_OPTION",
     "NunchakuFlux2KleinAdapter",
+    "TEXT_REF_BALANCE_DIRECT_OPTION",
     "calculate_live_model_size",
 ]

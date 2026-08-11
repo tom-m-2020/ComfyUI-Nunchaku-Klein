@@ -2,13 +2,12 @@
 
 from dataclasses import dataclass
 
-import torch
-
 from ...models.klein_wrapper import (
     ATTENTION_CALLBACKS_OPTION,
     Flux2AttentionCallbacks,
     NunchakuFlux2KleinAdapter,
 )
+from .attention_kv import validate_attention_kv_layout
 from .common import REFERENCE_CATEGORY
 from .validation import validate_finite_range, validate_int_range
 
@@ -19,117 +18,16 @@ class KleinRefLatentWeightKVCallback:
     weight: float
 
     def __call__(self, query, key, value, metadata):
-        tensors = {"query": query, "key": key, "value": value}
-        for name, tensor in tensors.items():
-            if not torch.is_tensor(tensor) or tensor.ndim != 4:
-                shape = None if not torch.is_tensor(tensor) else list(tensor.shape)
-                raise ValueError(
-                    f"Direct K/V {name} must be a rank-4 tensor, got {shape}."
-                )
-        if query.shape != key.shape or query.shape != value.shape:
-            raise ValueError(
-                "Direct K/V requires identical Q/K/V shapes, got "
-                f"Q={list(query.shape)}, K={list(key.shape)}, V={list(value.shape)}."
-            )
-        if query.dtype != key.dtype or query.dtype != value.dtype:
-            raise TypeError(
-                "Direct K/V requires identical Q/K/V dtypes, got "
-                f"Q={query.dtype}, K={key.dtype}, V={value.dtype}."
-            )
-        if query.device != key.device or query.device != value.device:
-            raise ValueError(
-                "Direct K/V requires identical Q/K/V devices, got "
-                f"Q={query.device}, K={key.device}, V={value.device}."
-            )
-
-        required_fields = (
-            "block_type",
-            "text_token_count",
-            "generated_token_count",
-            "reference_token_counts",
-            "logical_image_token_count",
-            "padded_text_token_count",
-            "padded_image_token_count",
-            "packed_sequence_length",
+        _, _, reference_ranges = validate_attention_kv_layout(
+            query, key, value, metadata, name="Direct K/V Ref Latent Weight"
         )
-        missing = [name for name in required_fields if not hasattr(metadata, name)]
-        if missing:
-            raise TypeError(
-                "Direct K/V callback metadata is missing: " + ", ".join(missing)
-            )
-
-        reference_counts = metadata.reference_token_counts
-        if not isinstance(reference_counts, tuple) or any(
-            isinstance(count, bool) or not isinstance(count, int) or count <= 0
-            for count in reference_counts
-        ):
-            raise ValueError(
-                "Direct K/V reference_token_counts must be an ordered tuple "
-                "of positive integers."
-            )
-        if not 0 <= self.reference_index < len(reference_counts):
+        if not 0 <= self.reference_index < len(reference_ranges):
             raise IndexError(
                 "Direct K/V reference_index "
                 f"{self.reference_index} is out of range for "
-                f"{len(reference_counts)} runtime references."
+                f"{len(reference_ranges)} runtime references."
             )
-
-        expected_image = metadata.generated_token_count + sum(reference_counts)
-        if metadata.logical_image_token_count != expected_image:
-            raise ValueError(
-                "Direct K/V logical image count is inconsistent: "
-                f"{metadata.logical_image_token_count} != {expected_image}."
-            )
-        if query.shape[2] != metadata.packed_sequence_length:
-            raise ValueError(
-                "Direct K/V packed sequence mismatch: Q/K/V have "
-                f"{query.shape[2]} tokens but metadata reports "
-                f"{metadata.packed_sequence_length}."
-            )
-        if (
-            metadata.packed_sequence_length
-            != metadata.padded_text_token_count + metadata.padded_image_token_count
-        ):
-            raise ValueError(
-                "Direct K/V padded text/image counts do not match the packed "
-                "sequence length."
-            )
-
-        if metadata.block_type == "double":
-            if metadata.padded_text_token_count < metadata.text_token_count:
-                raise ValueError("Direct K/V double-stream text padding is invalid.")
-            if metadata.padded_image_token_count < expected_image:
-                raise ValueError("Direct K/V double-stream image padding is invalid.")
-            image_start = metadata.padded_text_token_count
-        elif metadata.block_type == "single":
-            if metadata.padded_text_token_count != metadata.text_token_count:
-                raise ValueError(
-                    "Direct K/V single-stream text count must remain logical; "
-                    "single-stream padding is trailing."
-                )
-            if (
-                metadata.text_token_count + expected_image
-                > metadata.packed_sequence_length
-            ):
-                raise ValueError("Direct K/V single-stream logical sequence is invalid.")
-            image_start = metadata.text_token_count
-        else:
-            raise ValueError(
-                f"Direct K/V received unsupported block_type {metadata.block_type!r}."
-            )
-
-        start = (
-            image_start
-            + metadata.generated_token_count
-            + sum(reference_counts[: self.reference_index])
-        )
-        end = start + reference_counts[self.reference_index]
-        logical_image_end = image_start + expected_image
-        if start < image_start or end > logical_image_end or end > query.shape[2]:
-            raise ValueError(
-                f"Direct K/V reference range [{start}, {end}) is outside the "
-                f"logical image range [{image_start}, {logical_image_end})."
-            )
+        start, end = reference_ranges[self.reference_index]
 
         if self.weight != 1.0:
             key[:, :, start:end, :].mul_(self.weight)

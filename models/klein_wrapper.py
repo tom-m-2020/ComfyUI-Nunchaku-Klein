@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 LORA_SPEC_OPTION = "nunchaku_klein_lora_spec"
 REF_LATENT_WEIGHT_OPTION = "nunchaku_klein_ref_latent_weight"
 TEXT_REF_BALANCE_OPTION = "nunchaku_klein_text_ref_balance"
+TEXT_REF_BALANCE_DIRECT_OPTION = "nunchaku_klein_text_ref_balance_direct"
 ATTENTION_CALLBACKS_OPTION = "nunchaku_flux2_attention_callbacks"
 _SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
 # ComfyUI 0.29's Flux2 detection and Diffusers' Klein pipeline both separate
@@ -789,6 +790,26 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                 raise ValueError(
                     "Nunchaku FLUX.2 Klein Text/Ref Balance requires a "
                     "non-empty runtime reference list."
+                )
+
+        direct_text_ref_callbacks = None
+        if transformer_options is not None:
+            direct_text_ref_callbacks = transformer_options.get(
+                TEXT_REF_BALANCE_DIRECT_OPTION
+            )
+        if direct_text_ref_callbacks is not None:
+            if not isinstance(direct_text_ref_callbacks, tuple) or not all(
+                callable(callback) for callback in direct_text_ref_callbacks
+            ):
+                raise TypeError(
+                    f"{TEXT_REF_BALANCE_DIRECT_OPTION} must contain an "
+                    "immutable tuple of callables."
+                )
+            if ref_weight_spec is not None or text_ref_spec is not None:
+                raise ValueError(
+                    "Nunchaku FLUX.2 Klein Text/Ref Balance (Direct K/V) "
+                    "cannot be combined with prediction-space Ref Latent "
+                    "Weight or Text/Ref Balance. Remove one algorithm family."
                 )
 
         attention_callbacks = None
