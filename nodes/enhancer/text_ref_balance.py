@@ -2,6 +2,7 @@ from ...models.klein_wrapper import (
     KleinTextRefBalanceSpec,
     NunchakuFlux2KleinAdapter,
     REF_LATENT_WEIGHT_OPTION,
+    REF_LATENT_CONTROLLER_DIRECT_OPTION,
     TEXT_REF_BALANCE_OPTION,
 )
 from .common import REFERENCE_CATEGORY
@@ -68,6 +69,11 @@ class NunchakuKleinTextRefBalance:
                 "Nunchaku FLUX.2 Klein Text/Ref Balance cannot be stacked "
                 "with Ref Latent Weight in this release. Remove one node; "
                 "prediction-residual composition is not defined."
+            )
+        if transformer_options.get(REF_LATENT_CONTROLLER_DIRECT_OPTION) is not None:
+            raise ValueError(
+                "Prediction-space Text/Ref Balance cannot be combined with "
+                "Ref Latent Controller (Direct K/V). Remove one algorithm family."
             )
 
         branch = model.clone()

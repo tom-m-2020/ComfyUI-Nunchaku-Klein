@@ -18,6 +18,7 @@ LORA_SPEC_OPTION = "nunchaku_klein_lora_spec"
 REF_LATENT_WEIGHT_OPTION = "nunchaku_klein_ref_latent_weight"
 TEXT_REF_BALANCE_OPTION = "nunchaku_klein_text_ref_balance"
 TEXT_REF_BALANCE_DIRECT_OPTION = "nunchaku_klein_text_ref_balance_direct"
+REF_LATENT_CONTROLLER_DIRECT_OPTION = "nunchaku_klein_ref_latent_controller_direct"
 ATTENTION_CALLBACKS_OPTION = "nunchaku_flux2_attention_callbacks"
 _SHARED_LORA_STATE_ATTRIBUTE = "_comfyui_nunchaku_klein_lora_state"
 # ComfyUI 0.29's Flux2 detection and Diffusers' Klein pipeline both separate
@@ -619,9 +620,14 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         image: torch.Tensor,
         image_ids: torch.Tensor,
         ref_latents: list[torch.Tensor] | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, ...]]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        tuple[int, ...],
+        tuple[tuple[int, int], ...],
+    ]:
         if ref_latents is None:
-            return image, image_ids, ()
+            return image, image_ids, (), ()
         if not isinstance(ref_latents, list) or not ref_latents:
             raise TypeError(
                 "FLUX.2 Klein ref_latents must be a non-empty list of "
@@ -631,6 +637,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         batch = x.shape[0]
         packed_references = []
         reference_ids = []
+        reference_shapes = []
         for ref_index, reference in enumerate(ref_latents, start=1):
             if not torch.is_tensor(reference):
                 raise TypeError(
@@ -658,17 +665,19 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     f"device/dtype {x.device}/{x.dtype}, got "
                     f"{reference.device}/{reference.dtype}."
                 )
-            packed, ids, _, _ = self._pack_latents(
+            packed, ids, grid_height, grid_width = self._pack_latents(
                 reference,
                 image_index=REFERENCE_IMAGE_INDEX_STRIDE * ref_index,
             )
             packed_references.append(packed)
             reference_ids.append(ids)
+            reference_shapes.append((grid_height, grid_width))
 
         return (
             torch.cat([image, *packed_references], dim=1),
             torch.cat([image_ids, *reference_ids], dim=0),
             tuple(reference.shape[1] for reference in packed_references),
+            tuple(reference_shapes),
         )
 
     def forward(
@@ -793,9 +802,13 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                 )
 
         direct_text_ref_callbacks = None
+        direct_ref_controller_callbacks = None
         if transformer_options is not None:
             direct_text_ref_callbacks = transformer_options.get(
                 TEXT_REF_BALANCE_DIRECT_OPTION
+            )
+            direct_ref_controller_callbacks = transformer_options.get(
+                REF_LATENT_CONTROLLER_DIRECT_OPTION
             )
         if direct_text_ref_callbacks is not None:
             if not isinstance(direct_text_ref_callbacks, tuple) or not all(
@@ -808,6 +821,21 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             if ref_weight_spec is not None or text_ref_spec is not None:
                 raise ValueError(
                     "Nunchaku FLUX.2 Klein Text/Ref Balance (Direct K/V) "
+                    "cannot be combined with prediction-space Ref Latent "
+                    "Weight or Text/Ref Balance. Remove one algorithm family."
+                )
+
+        if direct_ref_controller_callbacks is not None:
+            if not isinstance(direct_ref_controller_callbacks, tuple) or not all(
+                callable(callback) for callback in direct_ref_controller_callbacks
+            ):
+                raise TypeError(
+                    f"{REF_LATENT_CONTROLLER_DIRECT_OPTION} must contain an "
+                    "immutable tuple of callables."
+                )
+            if ref_weight_spec is not None or text_ref_spec is not None:
+                raise ValueError(
+                    "Nunchaku FLUX.2 Klein Ref Latent Controller (Direct K/V) "
                     "cannot be combined with prediction-space Ref Latent "
                     "Weight or Text/Ref Balance. Remove one algorithm family."
                 )
@@ -832,11 +860,13 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                 raise RuntimeError(
                     "The installed Nunchaku backend cannot expose FLUX.2 attention callbacks."
                 ) from error
+            required_callback_api = 2 if direct_ref_controller_callbacks is not None else 1
             if getattr(
                 transformer_flux2, "FLUX2_ATTENTION_CALLBACK_API_VERSION", 0
-            ) < 1:
+            ) < required_callback_api:
                 raise RuntimeError(
-                    "This MODEL branch requires Nunchaku FLUX.2 attention callback API v1. "
+                    "This MODEL branch requires Nunchaku FLUX.2 attention callback API "
+                    f"v{required_callback_api}. "
                     "Install the qualified callback-capable backend derivative."
                 )
 
@@ -862,9 +892,12 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     generated_tokens,
                     effective_context is not context,
                 )
-                hidden_states, img_ids, reference_token_counts = self._pack_reference_latents(
-                    x, image, image_ids, references
-                )
+                (
+                    hidden_states,
+                    img_ids,
+                    reference_token_counts,
+                    reference_spatial_shapes,
+                ) = self._pack_reference_latents(x, image, image_ids, references)
                 self._validate_transformer_inputs(
                     hidden_states, effective_context, timestep, img_ids, text_ids
                 )
@@ -877,6 +910,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                             "post_attention_callbacks": attention_callbacks.post_attention_callbacks,
                             "generated_token_count": generated_tokens,
                             "reference_token_counts": reference_token_counts,
+                            "reference_spatial_shapes": reference_spatial_shapes,
                         }
                     sample = self.transformer(
                         hidden_states=hidden_states[index : index + 1],

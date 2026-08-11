@@ -23,6 +23,7 @@ from nunchaku_klein_attention_plumbing_test.models.klein_wrapper import (
     ATTENTION_CALLBACKS_OPTION,
     Flux2AttentionCallbacks,
     NunchakuFlux2KleinAdapter,
+    REF_LATENT_CONTROLLER_DIRECT_OPTION,
 )
 
 
@@ -114,6 +115,7 @@ class AttentionCallbackPlumbingTests(unittest.TestCase):
             self.assertEqual(runtime["post_attention_callbacks"], (post,))
             self.assertEqual(runtime["generated_token_count"], 6)
             self.assertEqual(runtime["reference_token_counts"], (2, 2))
+            self.assertEqual(runtime["reference_spatial_shapes"], ((1, 2), (2, 1)))
         self.assertIsNot(transformer.kwargs[0], transformer.kwargs[1])
 
     def test_callback_configuration_is_immutable_and_validated(self):
@@ -121,6 +123,22 @@ class AttentionCallbackPlumbingTests(unittest.TestCase):
             Flux2AttentionCallbacks(pre_attention_callbacks=[])
         with self.assertRaises(TypeError):
             Flux2AttentionCallbacks(post_attention_callbacks=(object(),))
+
+    def test_controller_requires_spatial_metadata_api_v2(self):
+        adapter, _ = adapter_and_transformer()
+        callback = lambda *args: None
+        options = {
+            ATTENTION_CALLBACKS_OPTION: Flux2AttentionCallbacks((callback,), ()),
+            REF_LATENT_CONTROLLER_DIRECT_OPTION: (callback,),
+        }
+        self.backend.FLUX2_ATTENTION_CALLBACK_API_VERSION = 1
+        with self.assertRaisesRegex(RuntimeError, "callback API v2"):
+            adapter(
+                torch.zeros((1, 2, 2, 3)),
+                torch.ones((1,)),
+                torch.zeros((1, 5, 4)),
+                transformer_options=options,
+            )
 
 
 if __name__ == "__main__":

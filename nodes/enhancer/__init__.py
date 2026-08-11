@@ -7,6 +7,7 @@ from .identity_guidance import NunchakuKleinIdentityGuidance
 from .mask_reference import NunchakuKleinMaskReferenceController
 from .multi_reference import NunchakuKleinMultiReferenceLatent
 from .ref_latent_weight import NunchakuKleinRefLatentWeight
+from .ref_latent_controller_direct import NunchakuKleinRefLatentControllerDirectKV
 from .ref_latent_weight_direct import NunchakuKleinRefLatentWeightDirectKV
 from .sectioned_encoder import NunchakuKleinSectionedEncoder
 from .text_enhancer import NunchakuKleinTextEnhancer
@@ -22,6 +23,7 @@ NODE_CLASS_MAPPINGS = {
     "NunchakuKleinMaskReferenceController": NunchakuKleinMaskReferenceController,
     "NunchakuKleinMultiReferenceLatent": NunchakuKleinMultiReferenceLatent,
     "NunchakuKleinRefLatentWeight": NunchakuKleinRefLatentWeight,
+    "NunchakuKleinRefLatentControllerDirectKV": NunchakuKleinRefLatentControllerDirectKV,
     "NunchakuKleinRefLatentWeightDirectKV": NunchakuKleinRefLatentWeightDirectKV,
     "NunchakuKleinSectionedEncoder": NunchakuKleinSectionedEncoder,
     "NunchakuKleinTextEnhancer": NunchakuKleinTextEnhancer,
@@ -42,6 +44,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     ),
     "NunchakuKleinRefLatentWeight": (
         "Nunchaku FLUX.2 Klein Ref Latent Weight"
+    ),
+    "NunchakuKleinRefLatentControllerDirectKV": (
+        "Nunchaku FLUX.2 Klein Ref Latent Controller (Direct K/V)"
     ),
     "NunchakuKleinRefLatentWeightDirectKV": (
         "Nunchaku FLUX.2 Klein Ref Latent Weight (Direct K/V)"
@@ -66,6 +71,7 @@ __all__ = [
     "NunchakuKleinMaskReferenceController",
     "NunchakuKleinMultiReferenceLatent",
     "NunchakuKleinRefLatentWeight",
+    "NunchakuKleinRefLatentControllerDirectKV",
     "NunchakuKleinRefLatentWeightDirectKV",
     "NunchakuKleinSectionedEncoder",
     "NunchakuKleinTextEnhancer",
