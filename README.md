@@ -17,14 +17,18 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > - Text/Ref Balance
 > - Identity Guidance (only for experiments, not productive)
 > - Ref Latent Weight (Direct K/V)
+> - Text/Ref Balance (Direct K/V)
 > 
 > What's NOT supported:
 > - Identity Feature Transfer
 
 ## News
-- **2026-08-11** **v0.7.0**
-  - **Ref Latent Weight (Direct K/V)**
-    - **NOTE:** NEEDS NEW NUNCHAKU BACKEND. To use this node you'll need to reinstall nunchaku with our **"fork of the community-maintained Nunchaku"** that means, _Vitoom Nunchaku_ which is an extended version of nunchaku by _tonera_ has been **further extended** by me, which gives you **full control over Flux.2 Klein**.
+- **2026-08-11**
+  - **v0.8.0**
+    - **Text/Ref Balance (Direct K/V)** (needs the new modified backend)
+  - **v0.7.0**
+    - **Ref Latent Weight (Direct K/V)**
+      - **NOTE:** NEEDS NEW NUNCHAKU BACKEND. To use this node you'll need to reinstall nunchaku with our **"fork of the community-maintained Nunchaku"** that means, _Vitoom Nunchaku_ which is an extended version of nunchaku by _tonera_ has been **further extended** by me, which gives you **full control over Flux.2 Klein**.
 - **2026-08-09**
   - **v0.6.0**
     - **Text/Ref Balance** (not perfect, experimental. Use `0.50-1.00` in `balance`.)
