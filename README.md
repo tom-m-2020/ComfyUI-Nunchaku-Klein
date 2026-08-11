@@ -1,5 +1,7 @@
 # ComfyUI-Nunchaku-Klein
 
+![](docs/media/screenshot-2026-08-11-200143.jpg)
+
 ComfyUI custom node for **Nunchaku Flux.2 Klein**, independent of official [ComyUI-Nunchaku](https://github.com/nunchaku-ai/nunchaku).
 Added features such as **Klein Enhancer** ported + compatibility version to work on Nunchaku (not identical).
 
