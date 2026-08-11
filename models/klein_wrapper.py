@@ -849,7 +849,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                 )
             if ref_weight_spec is not None or text_ref_spec is not None:
                 raise ValueError(
-                    "Nunchaku FLUX.2 Klein Ref Latent Controller (Direct K/V) "
+                    "Nunchaku FLUX.2 Klein Identity Feature Transfer (Final) "
                     "cannot be combined with prediction-space Ref Latent "
                     "Weight or Text/Ref Balance. Remove one algorithm family."
                 )
