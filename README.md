@@ -8,6 +8,9 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > **NOTE**: In order to use "**Direct K/V**" nodes or **Identity Feature Transfer**, you'll have to install the newer fork of Vitoom Nunchaku.
 
 ## News
+- **2026-08-12**
+  - **v0.9.0**
+    - **Identity Feature Transfer Final** (`zero_unmasked_tokens` and `Sigma-aware strength scheduling` not supported.) (**Requires new nunchaku backend APIv3**.)
 - **2026-08-11**
   - **v0.8.0**
     - **Text/Ref Balance (Direct K/V)** (needs the new modified backend)
@@ -43,7 +46,7 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] 9B basic support
 - [x] LoRA support
 - [x] Reference Edit support
-- [x] Klein Enhancer (partially)
+- [x] Klein Enhancer
 - [ ] Test Differential Diffusion / if not: SpotEdit
 - [ ] ~~Test Normalized Attention Guidance~~
 - [ ] 4B support
