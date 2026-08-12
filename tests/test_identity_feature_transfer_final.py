@@ -36,6 +36,7 @@ from nunchaku_klein_identity_final_test.nodes.enhancer.identity_feature_transfer
     HARD_DOUBLE,
     HARD_SINGLE,
     KleinIdentityFeatureTransferFinalCallback,
+    _evenly_spaced_indices,
     _parse_schedule,
 )
 
@@ -102,10 +103,12 @@ def callback(*, selected=None, double=(1.0,) + (0.0,) * 7, single=(1.0,) + (0.0,
     )
 
 
-def independent_final(output, info, selected, strength, floor, temperature):
+def independent_final(output, info, selected, strength, floor, temperature, bank_indices=None):
     generated_range, ref_ranges = ranges(info)
     gen = output[:, generated_range[0]:generated_range[1]]
     ref = torch.cat([output[:, ref_ranges[index][0]:ref_ranges[index][1]] for index in selected], 1)
+    if bank_indices is not None:
+        ref = ref.index_select(1, torch.tensor(bank_indices))
     gf, rf = gen.float(), ref.float()
     gn = torch.nn.functional.normalize(gf - gf.mean(1, keepdim=True), dim=-1)
     rn = torch.nn.functional.normalize(rf - rf.mean(1, keepdim=True), dim=-1)
@@ -138,7 +141,8 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
         ])
         self.assertEqual(list(inputs["optional"]), [
             "sigmas", "debug_spatial", "debug_probe_block_type",
-            "debug_probe_block_index", *[f"subject_mask_{i}" for i in range(1, 9)],
+            "debug_probe_block_index", "debug_eligible_bank_cap",
+            *[f"subject_mask_{i}" for i in range(1, 9)],
         ])
         self.assertEqual(inputs["required"]["double_blocks"][1]["default"], HARD_DOUBLE)
         self.assertEqual(inputs["required"]["single_blocks"][1]["default"], HARD_SINGLE)
@@ -275,11 +279,53 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
             files = tuple(pathlib.Path(directory).glob("*.png"))
             self.assertEqual(len(files), 4)
             self.assertTrue(all(path.stat().st_size > 0 for path in files))
-            self.assertIn("top=1% bbox_area_fraction=", "\n".join(captured.output))
+            messages = "\n".join(captured.output)
+            for expected in (
+                "reference_tokens_total=2 eligible_reference_tokens=2 matching_reference_tokens=2",
+                "best_similarity: mean=",
+                "p90=",
+                "p95=",
+                "p99=",
+                "confidence: mean=",
+                "delta_norm: mean=",
+                "top=1% bbox_area_fraction=",
+            ):
+                self.assertIn(expected, messages)
 
             other_block = metadata(block_index=1)
             probe(output, other_block)
             self.assertEqual(len(tuple(pathlib.Path(directory).glob("*.png"))), 4)
+
+    def test_diagnostic_bank_cap_is_uniform_deterministic_and_feature_aligned(self):
+        indices = _evenly_spaced_indices(10, 4, torch.device("cpu"))
+        self.assertEqual(indices.tolist(), [0, 3, 6, 9])
+        self.assertEqual(
+            _evenly_spaced_indices(1080, 284, torch.device("cpu"))[[0, -1]].tolist(),
+            [0, 1079],
+        )
+        self.assertEqual(
+            torch.unique(_evenly_spaced_indices(1080, 284, torch.device("cpu"))).numel(),
+            284,
+        )
+
+        info = metadata(refs=(10,), shapes=((2, 5),))
+        output = torch.randn(1, info.packed_sequence_length, 4)
+        capped = KleinIdentityFeatureTransferFinalCallback(
+            (0,), (1.0,) + (0.0,) * 7, (0.0,) * 24,
+            0.0, 0.1, 1.0, (None,) * 8, True,
+            False, "double", 0, None, 4,
+        )
+        with self.assertLogs(capped.__class__.__module__, level="INFO") as captured:
+            actual = capped(output, info)
+        expected = independent_final(output, info, (0,), 1.0, 0.0, 0.1, [0, 3, 6, 9])
+        self.assertTrue(torch.equal(actual, expected))
+        messages = "\n".join(captured.output)
+        self.assertIn("eligible=10 capped=4 first=0 last=9", messages)
+
+    def test_diagnostic_bank_cap_requires_debug(self):
+        source = FakeModelPatcher(make_adapter())
+        with self.assertRaisesRegex(ValueError, "requires debug=true"):
+            self.node.apply(source, debug=False, debug_eligible_bank_cap=284)
 
 
 if __name__ == "__main__":

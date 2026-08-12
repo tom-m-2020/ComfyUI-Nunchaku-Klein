@@ -41,6 +41,15 @@ PRESETS = {
 GENERATED_QUERY_CHUNK_SIZE = 256
 
 
+def _evenly_spaced_indices(total, count, device):
+    if count >= total:
+        return torch.arange(total, device=device, dtype=torch.long)
+    if count == 1:
+        return torch.tensor((total // 2,), device=device, dtype=torch.long)
+    positions = torch.arange(count, device=device, dtype=torch.long)
+    return positions.mul(total - 1).floor_divide(count - 1)
+
+
 def _save_debug_heatmaps(maps, grid_shape, output_directory, prefix):
     from PIL import Image
 
@@ -151,6 +160,7 @@ class KleinIdentityFeatureTransferFinalCallback:
     debug_probe_block_type: str = "double"
     debug_probe_block_index: int = 0
     debug_output_directory: str | None = None
+    debug_eligible_bank_cap: int = 0
 
     def __call__(self, attention_output, metadata):
         if not torch.is_tensor(attention_output) or attention_output.ndim != 3:
@@ -257,6 +267,29 @@ class KleinIdentityFeatureTransferFinalCallback:
                 )
             return None
         reference_bank = bank_parts[0] if len(bank_parts) == 1 else torch.cat(bank_parts, dim=1)
+        eligible_tokens_before_cap = reference_bank.shape[1]
+        bank_source_indices = torch.arange(
+            eligible_tokens_before_cap, device=reference_bank.device, dtype=torch.long
+        )
+        if self.debug_eligible_bank_cap and eligible_tokens_before_cap > self.debug_eligible_bank_cap:
+            selected_bank_indices = _evenly_spaced_indices(
+                eligible_tokens_before_cap,
+                self.debug_eligible_bank_cap,
+                reference_bank.device,
+            )
+            reference_bank = reference_bank.index_select(1, selected_bank_indices)
+            bank_source_indices = bank_source_indices.index_select(0, selected_bank_indices)
+            if self.debug:
+                logger.info(
+                    "IFT Final diagnostic bank cap: %s %d eligible=%d capped=%d "
+                    "first=%d last=%d",
+                    metadata.block_type,
+                    metadata.block_index,
+                    eligible_tokens_before_cap,
+                    reference_bank.shape[1],
+                    int(selected_bank_indices[0]),
+                    int(selected_bank_indices[-1]),
+                )
         gen_start, gen_end = generated_range
         generated = attention_output[:, gen_start:gen_end]
         if generated.shape[1] == 0:
@@ -310,7 +343,7 @@ class KleinIdentityFeatureTransferFinalCallback:
                     winner = raw_similarity.argmax(dim=-1)
                     winner = torch.where(
                         raw_best >= self.similarity_floor,
-                        winner,
+                        bank_source_indices[winner],
                         torch.full_like(winner, -1),
                     )
                     spatial_best.append(raw_best.detach().cpu())
@@ -391,6 +424,30 @@ class KleinIdentityFeatureTransferFinalCallback:
                     "delta_norm": torch.cat(spatial_delta_norm, dim=1),
                     "winning_reference_token": torch.cat(spatial_winner, dim=1),
                 }
+                reference_tokens_total = sum(
+                    reference_ranges[index][1] - reference_ranges[index][0]
+                    for index in selected
+                )
+                percentile_lines = []
+                quantiles = torch.tensor((0.90, 0.95, 0.99), dtype=torch.float32)
+                for name in ("best_similarity", "confidence", "delta_norm"):
+                    values = maps[name].float().flatten()
+                    p90, p95, p99 = torch.quantile(values, quantiles).tolist()
+                    percentile_lines.append(
+                        f"{name}: mean={float(values.mean()):.6f} "
+                        f"p90={p90:.6f} p95={p95:.6f} p99={p99:.6f} "
+                        f"max={float(values.max()):.6f}"
+                    )
+                logger.info(
+                    "IFT Final probe: %s %d reference_tokens_total=%d "
+                    "eligible_reference_tokens=%d matching_reference_tokens=%d\n%s",
+                    metadata.block_type,
+                    metadata.block_index,
+                    reference_tokens_total,
+                    eligible_tokens_before_cap,
+                    reference_bank.shape[1],
+                    "\n".join(percentile_lines),
+                )
                 confidence_map = maps["confidence"]
                 for percentage in (1, 5, 10):
                     count = max(1, math.ceil(confidence_map.shape[1] * percentage / 100))
@@ -450,6 +507,7 @@ class NunchakuKleinIdentityFeatureTransferFinal:
                 "debug_spatial": ("BOOLEAN", {"default": False}),
                 "debug_probe_block_type": (["double", "single"], {"default": "double"}),
                 "debug_probe_block_index": ("INT", {"default": 0, "min": 0, "max": 23, "step": 1}),
+                "debug_eligible_bank_cap": ("INT", {"default": 0, "min": 0, "max": 65536, "step": 1}),
                 **{f"subject_mask_{index}": ("MASK",) for index in range(1, 9)},
             },
         }
@@ -481,6 +539,7 @@ class NunchakuKleinIdentityFeatureTransferFinal:
         debug_spatial=False,
         debug_probe_block_type="double",
         debug_probe_block_index=0,
+        debug_eligible_bank_cap=0,
         **mask_inputs,
     ):
         enabled = validate_bool(enabled, name="enabled")
@@ -495,6 +554,14 @@ class NunchakuKleinIdentityFeatureTransferFinal:
             minimum=0,
             maximum=maximum_probe_index,
         )
+        debug_eligible_bank_cap = validate_int_range(
+            debug_eligible_bank_cap,
+            name="debug_eligible_bank_cap",
+            minimum=0,
+            maximum=65536,
+        )
+        if debug_eligible_bank_cap and not debug:
+            raise ValueError("debug_eligible_bank_cap requires debug=true.")
         adapter = getattr(model.model, "diffusion_model", None)
         if not isinstance(adapter, NunchakuFlux2KleinAdapter):
             raise TypeError(
@@ -554,6 +621,7 @@ class NunchakuKleinIdentityFeatureTransferFinal:
             debug_probe_block_type,
             debug_probe_block_index,
             debug_output_directory,
+            debug_eligible_bank_cap,
         )
         if not any(strength > 0.0 for strength in (*callback.double_strengths, *callback.single_strengths)):
             return (branch,)
@@ -577,4 +645,5 @@ class NunchakuKleinIdentityFeatureTransferFinal:
 __all__ = [
     "KleinIdentityFeatureTransferFinalCallback",
     "NunchakuKleinIdentityFeatureTransferFinal",
+    "_evenly_spaced_indices",
 ]
