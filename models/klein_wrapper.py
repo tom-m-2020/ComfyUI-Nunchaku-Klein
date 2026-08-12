@@ -711,6 +711,16 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         batch, _, height, width = x.shape
         image, image_ids, grid_height, grid_width = self._pack_latents(x)
         generated_tokens = image.shape[1]
+        generated_spatial_shape = (grid_height, grid_width)
+        if (
+            not all(isinstance(value, int) and value > 0 for value in generated_spatial_shape)
+            or generated_spatial_shape[0] * generated_spatial_shape[1]
+            != generated_tokens
+        ):
+            raise ValueError(
+                "The generated packed grid does not match its token count: "
+                f"shape={generated_spatial_shape}, tokens={generated_tokens}."
+            )
         ref_latents = kwargs.get("ref_latents")
         if ref_latents is not None:
             ref_method = kwargs.get("ref_latents_method")
@@ -934,7 +944,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                             "pre_attention_callbacks": attention_callbacks.pre_attention_callbacks,
                             "post_attention_callbacks": attention_callbacks.post_attention_callbacks,
                             "generated_token_count": generated_tokens,
-                            "generated_spatial_shape": (grid_height, grid_width),
+                            "generated_spatial_shape": generated_spatial_shape,
                             "reference_token_counts": reference_token_counts,
                             "reference_spatial_shapes": reference_spatial_shapes,
                         }

@@ -158,6 +158,30 @@ class AttentionCallbackPlumbingTests(unittest.TestCase):
                 transformer_options=options,
             )
 
+    def test_spatial_probe_passes_actual_non_square_generated_grid(self):
+        adapter, transformer = adapter_and_transformer()
+        callback = lambda *args: None
+        callback.debug_spatial = True
+        options = {
+            ATTENTION_CALLBACKS_OPTION: Flux2AttentionCallbacks((), (callback,)),
+            IDENTITY_FEATURE_TRANSFER_FINAL_OPTION: (callback,),
+        }
+        self.backend.FLUX2_ATTENTION_CALLBACK_API_VERSION = 3
+        adapter(
+            torch.zeros((1, 2, 2, 3)),
+            torch.ones((1,)),
+            torch.zeros((1, 5, 4)),
+            transformer_options=options,
+        )
+        runtime = transformer.kwargs[0]
+        self.assertIsInstance(runtime["generated_spatial_shape"], tuple)
+        self.assertEqual(runtime["generated_spatial_shape"], (2, 3))
+        self.assertEqual(
+            runtime["generated_spatial_shape"][0]
+            * runtime["generated_spatial_shape"][1],
+            runtime["generated_token_count"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
