@@ -161,6 +161,7 @@ class KleinIdentityFeatureTransferFinalCallback:
     debug_probe_block_index: int = 0
     debug_output_directory: str | None = None
     debug_eligible_bank_cap: int = 0
+    debug_reference_pool_shape: tuple[int, int] | None = None
 
     def __call__(self, attention_output, metadata):
         if not torch.is_tensor(attention_output) or attention_output.ndim != 3:
@@ -234,10 +235,37 @@ class KleinIdentityFeatureTransferFinalCallback:
         for index in selected:
             start, end = reference_ranges[index]
             part = attention_output[:, start:end]
+            height, width = shapes[index]
+            effective_height, effective_width = height, width
+            if self.debug_reference_pool_shape is not None:
+                effective_height, effective_width = self.debug_reference_pool_shape
+                feature_grid = part.float().reshape(
+                    part.shape[0], height, width, part.shape[2]
+                ).permute(0, 3, 1, 2)
+                part = F.adaptive_avg_pool2d(
+                    feature_grid, (effective_height, effective_width)
+                ).permute(0, 2, 3, 1).reshape(
+                    part.shape[0], effective_height * effective_width, part.shape[2]
+                )
+                if self.debug:
+                    logger.info(
+                        "IFT Final diagnostic feature pool: %s %d ref=%d "
+                        "source=(%d,%d) target=(%d,%d) tokens=%d->%d",
+                        metadata.block_type,
+                        metadata.block_index,
+                        index,
+                        height,
+                        width,
+                        effective_height,
+                        effective_width,
+                        height * width,
+                        effective_height * effective_width,
+                    )
             mask = self.masks[index] if index < len(self.masks) else None
             if mask is not None:
-                height, width = shapes[index]
-                pooled = F.adaptive_avg_pool2d(mask[None, None], (height, width)).flatten()
+                pooled = F.adaptive_avg_pool2d(
+                    mask[None, None], (effective_height, effective_width)
+                ).flatten()
                 eligible = torch.nonzero(pooled >= self.mask_threshold, as_tuple=False).flatten()
                 if self.debug:
                     logger.info(
@@ -508,6 +536,8 @@ class NunchakuKleinIdentityFeatureTransferFinal:
                 "debug_probe_block_type": (["double", "single"], {"default": "double"}),
                 "debug_probe_block_index": ("INT", {"default": 0, "min": 0, "max": 23, "step": 1}),
                 "debug_eligible_bank_cap": ("INT", {"default": 0, "min": 0, "max": 65536, "step": 1}),
+                "debug_reference_pool_height": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 1}),
+                "debug_reference_pool_width": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 1}),
                 **{f"subject_mask_{index}": ("MASK",) for index in range(1, 9)},
             },
         }
@@ -540,6 +570,8 @@ class NunchakuKleinIdentityFeatureTransferFinal:
         debug_probe_block_type="double",
         debug_probe_block_index=0,
         debug_eligible_bank_cap=0,
+        debug_reference_pool_height=0,
+        debug_reference_pool_width=0,
         **mask_inputs,
     ):
         enabled = validate_bool(enabled, name="enabled")
@@ -562,6 +594,35 @@ class NunchakuKleinIdentityFeatureTransferFinal:
         )
         if debug_eligible_bank_cap and not debug:
             raise ValueError("debug_eligible_bank_cap requires debug=true.")
+        debug_reference_pool_height = validate_int_range(
+            debug_reference_pool_height,
+            name="debug_reference_pool_height",
+            minimum=0,
+            maximum=4096,
+        )
+        debug_reference_pool_width = validate_int_range(
+            debug_reference_pool_width,
+            name="debug_reference_pool_width",
+            minimum=0,
+            maximum=4096,
+        )
+        if bool(debug_reference_pool_height) != bool(debug_reference_pool_width):
+            raise ValueError(
+                "debug_reference_pool_height and debug_reference_pool_width "
+                "must both be zero or both be positive."
+            )
+        if debug_reference_pool_height and not debug:
+            raise ValueError("debug reference feature pooling requires debug=true.")
+        if debug_reference_pool_height and debug_eligible_bank_cap:
+            raise ValueError(
+                "debug reference feature pooling cannot be combined with "
+                "debug_eligible_bank_cap in one controlled experiment."
+            )
+        debug_reference_pool_shape = (
+            (debug_reference_pool_height, debug_reference_pool_width)
+            if debug_reference_pool_height
+            else None
+        )
         adapter = getattr(model.model, "diffusion_model", None)
         if not isinstance(adapter, NunchakuFlux2KleinAdapter):
             raise TypeError(
@@ -622,6 +683,7 @@ class NunchakuKleinIdentityFeatureTransferFinal:
             debug_probe_block_index,
             debug_output_directory,
             debug_eligible_bank_cap,
+            debug_reference_pool_shape,
         )
         if not any(strength > 0.0 for strength in (*callback.double_strengths, *callback.single_strengths)):
             return (branch,)

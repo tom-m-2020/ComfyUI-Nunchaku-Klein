@@ -103,10 +103,12 @@ def callback(*, selected=None, double=(1.0,) + (0.0,) * 7, single=(1.0,) + (0.0,
     )
 
 
-def independent_final(output, info, selected, strength, floor, temperature, bank_indices=None):
+def independent_final(output, info, selected, strength, floor, temperature, bank_indices=None, reference_override=None):
     generated_range, ref_ranges = ranges(info)
     gen = output[:, generated_range[0]:generated_range[1]]
     ref = torch.cat([output[:, ref_ranges[index][0]:ref_ranges[index][1]] for index in selected], 1)
+    if reference_override is not None:
+        ref = reference_override
     if bank_indices is not None:
         ref = ref.index_select(1, torch.tensor(bank_indices))
     gf, rf = gen.float(), ref.float()
@@ -142,6 +144,7 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
         self.assertEqual(list(inputs["optional"]), [
             "sigmas", "debug_spatial", "debug_probe_block_type",
             "debug_probe_block_index", "debug_eligible_bank_cap",
+            "debug_reference_pool_height", "debug_reference_pool_width",
             *[f"subject_mask_{i}" for i in range(1, 9)],
         ])
         self.assertEqual(inputs["required"]["double_blocks"][1]["default"], HARD_DOUBLE)
@@ -326,6 +329,53 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
         source = FakeModelPatcher(make_adapter())
         with self.assertRaisesRegex(ValueError, "requires debug=true"):
             self.node.apply(source, debug=False, debug_eligible_bank_cap=284)
+
+    def test_diagnostic_feature_pool_uses_spatial_grid_and_pooled_mask(self):
+        info = metadata(refs=(16,), shapes=((4, 4),))
+        output = torch.randn(1, info.packed_sequence_length, 4)
+        _, ref_ranges = ranges(info)
+        start, end = ref_ranges[0]
+        source_reference = output[:, start:end]
+        pooled_reference = torch.nn.functional.adaptive_avg_pool2d(
+            source_reference.float().reshape(1, 4, 4, 4).permute(0, 3, 1, 2),
+            (2, 2),
+        ).permute(0, 2, 3, 1).reshape(1, 4, 4)
+        mask = torch.tensor([
+            [1.0, 1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ])
+        callback = KleinIdentityFeatureTransferFinalCallback(
+            (0,), (1.0,) + (0.0,) * 7, (0.0,) * 24,
+            0.0, 0.1, 0.5, (mask,) + (None,) * 7, True,
+            False, "double", 0, None, 0, (2, 2),
+        )
+        with self.assertLogs(callback.__class__.__module__, level="INFO") as captured:
+            actual = callback(output, info)
+        expected = independent_final(
+            output, info, (0,), 1.0, 0.0, 0.1,
+            reference_override=pooled_reference[:, :1],
+        )
+        self.assertTrue(torch.equal(actual, expected))
+        messages = "\n".join(captured.output)
+        self.assertIn("source=(4,4) target=(2,2) tokens=16->4", messages)
+        self.assertIn("eligible=1/4", messages)
+
+    def test_diagnostic_feature_pool_validation(self):
+        source = FakeModelPatcher(make_adapter())
+        with self.assertRaisesRegex(ValueError, "both be zero or both be positive"):
+            self.node.apply(source, debug=True, debug_reference_pool_height=32)
+        with self.assertRaisesRegex(ValueError, "requires debug=true"):
+            self.node.apply(
+                source, debug=False,
+                debug_reference_pool_height=32, debug_reference_pool_width=32,
+            )
+        with self.assertRaisesRegex(ValueError, "cannot be combined"):
+            self.node.apply(
+                source, debug=True, debug_eligible_bank_cap=284,
+                debug_reference_pool_height=32, debug_reference_pool_width=32,
+            )
 
 
 if __name__ == "__main__":
