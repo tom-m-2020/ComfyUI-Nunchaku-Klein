@@ -8,7 +8,9 @@ target-owned.
 from dataclasses import dataclass
 import logging
 import math
+from pathlib import Path
 import re
+import time
 
 import torch
 from torch.nn import functional as F
@@ -37,6 +39,37 @@ PRESETS = {
     "SOFT_LOCK": (HARD_DOUBLE, HARD_SINGLE, 0.500, 0.0700, 1.0),
 }
 GENERATED_QUERY_CHUNK_SIZE = 256
+
+
+def _save_debug_heatmaps(maps, grid_shape, output_directory, prefix):
+    from PIL import Image
+
+    height, width = grid_shape
+    directory = Path(output_directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for batch_index in range(maps["confidence"].shape[0]):
+        values = {
+            "best_similarity": ((maps["best_similarity"][batch_index] + 1.0) * 0.5).clamp(0, 1),
+            "confidence": maps["confidence"][batch_index].clamp(0, 1),
+            "delta_norm": maps["delta_norm"][batch_index],
+            "winning_reference_token": maps["winning_reference_token"][batch_index].float(),
+        }
+        delta = values["delta_norm"]
+        values["delta_norm"] = (delta - delta.min()) / (delta.max() - delta.min()).clamp(min=1e-12)
+        winner = values["winning_reference_token"]
+        valid_winner = winner >= 0
+        winner_normalized = torch.zeros_like(winner)
+        if valid_winner.any():
+            maximum = winner[valid_winner].max().clamp(min=1)
+            winner_normalized[valid_winner] = winner[valid_winner] / maximum
+        values["winning_reference_token"] = winner_normalized
+        for name, value in values.items():
+            pixels = (value.reshape(height, width).clamp(0, 1) * 255).round().to(torch.uint8).numpy()
+            path = directory / f"{prefix}_batch{batch_index}_{name}.png"
+            Image.fromarray(pixels, mode="L").save(path)
+            paths.append(path)
+    return tuple(paths)
 
 
 def _parse_schedule(text, block_count, *, name):
@@ -114,6 +147,10 @@ class KleinIdentityFeatureTransferFinalCallback:
     mask_threshold: float
     masks: tuple[torch.Tensor | None, ...]
     debug: bool = False
+    debug_spatial: bool = False
+    debug_probe_block_type: str = "double"
+    debug_probe_block_index: int = 0
+    debug_output_directory: str | None = None
 
     def __call__(self, attention_output, metadata):
         if not torch.is_tensor(attention_output) or attention_output.ndim != 3:
@@ -192,12 +229,32 @@ class KleinIdentityFeatureTransferFinalCallback:
                 height, width = shapes[index]
                 pooled = F.adaptive_avg_pool2d(mask[None, None], (height, width)).flatten()
                 eligible = torch.nonzero(pooled >= self.mask_threshold, as_tuple=False).flatten()
+                if self.debug:
+                    logger.info(
+                        "IFT Final mask: %s %d ref=%d threshold=%.2f "
+                        "eligible=%d/%d pooled_min=%.6f pooled_max=%.6f",
+                        metadata.block_type,
+                        metadata.block_index,
+                        index,
+                        self.mask_threshold,
+                        eligible.numel(),
+                        pooled.numel(),
+                        float(pooled.min()),
+                        float(pooled.max()),
+                    )
                 if eligible.numel() == 0:
                     continue
                 part = part.index_select(1, eligible.to(device=attention_output.device))
             if part.shape[1]:
                 bank_parts.append(part)
         if not bank_parts:
+            if self.debug:
+                logger.info(
+                    "IFT Final: %s %d refs=%s eligible bank is empty -> no-op",
+                    metadata.block_type,
+                    metadata.block_index,
+                    selected,
+                )
             return None
         reference_bank = bank_parts[0] if len(bank_parts) == 1 else torch.cat(bank_parts, dim=1)
         gen_start, gen_end = generated_range
@@ -217,15 +274,51 @@ class KleinIdentityFeatureTransferFinalCallback:
         result = attention_output.clone()
         negative = torch.finfo(torch.float32).min
         confidence_denominator = max(1.0 - self.similarity_floor, 1e-6)
+        debug_count = 0
+        debug_above_floor = 0
+        debug_similarity_sum = 0.0
+        debug_similarity_max = -math.inf
+        debug_confidence_sum = 0.0
+        debug_confidence_max = 0.0
+        debug_delta_norm_sum = 0.0
+        debug_original_norm_sum = 0.0
+        collect_spatial = (
+            self.debug
+            and self.debug_spatial
+            and metadata.block_type == self.debug_probe_block_type
+            and metadata.block_index == self.debug_probe_block_index
+        )
+        spatial_best = []
+        spatial_confidence = []
+        spatial_delta_norm = []
+        spatial_winner = []
         for offset in range(0, generated.shape[1], GENERATED_QUERY_CHUNK_SIZE):
             stop = min(offset + GENERATED_QUERY_CHUNK_SIZE, generated.shape[1])
-            similarity = torch.bmm(
+            raw_similarity = torch.bmm(
                 generated_normalized[:, offset:stop], reference_transposed
             )
+            if self.debug:
+                raw_best = raw_similarity.max(dim=-1).values
+                valid_matches = raw_best >= self.similarity_floor
+                debug_count += raw_best.numel()
+                debug_above_floor += int(valid_matches.sum().item())
+                debug_similarity_sum += float(raw_best.sum().item())
+                debug_similarity_max = max(
+                    debug_similarity_max, float(raw_best.max().item())
+                )
+                if collect_spatial:
+                    winner = raw_similarity.argmax(dim=-1)
+                    winner = torch.where(
+                        raw_best >= self.similarity_floor,
+                        winner,
+                        torch.full_like(winner, -1),
+                    )
+                    spatial_best.append(raw_best.detach().cpu())
+                    spatial_winner.append(winner.detach().cpu())
             similarity = torch.where(
-                similarity >= self.similarity_floor,
-                similarity,
-                torch.full_like(similarity, negative),
+                raw_similarity >= self.similarity_floor,
+                raw_similarity,
+                torch.full_like(raw_similarity, negative),
             )
             weights = torch.softmax(similarity / self.softmax_temperature, dim=-1)
             weights = torch.nan_to_num(weights, nan=0.0)
@@ -237,18 +330,97 @@ class KleinIdentityFeatureTransferFinalCallback:
             ).clamp(0.0, 1.0)
             original = generated[:, offset:stop]
             transfer_weight = (confidence * strength).unsqueeze(-1).to(original.dtype)
-            result[:, gen_start + offset : gen_start + stop] = original + (
-                pooled.to(original.dtype) - original
-            ) * transfer_weight
+            applied_delta = (pooled.to(original.dtype) - original) * transfer_weight
+            result[:, gen_start + offset : gen_start + stop] = original + applied_delta
+            if self.debug:
+                debug_confidence_sum += float(confidence.sum().item())
+                debug_confidence_max = max(
+                    debug_confidence_max, float(confidence.max().item())
+                )
+                debug_delta_norm_sum += float(
+                    applied_delta.float().norm(dim=-1).sum().item()
+                )
+                debug_original_norm_sum += float(
+                    original.float().norm(dim=-1).sum().item()
+                )
+                if collect_spatial:
+                    spatial_confidence.append(confidence.detach().cpu())
+                    spatial_delta_norm.append(
+                        applied_delta.float().norm(dim=-1).detach().cpu()
+                    )
         if self.debug:
+            mean_delta_norm = debug_delta_norm_sum / max(debug_count, 1)
+            relative_delta = debug_delta_norm_sum / max(
+                debug_original_norm_sum, 1e-12
+            )
             logger.info(
-                "Identity Feature Transfer Final: %s %d refs=%s strength=%.4f bank=%d",
+                "IFT Final: %s %d refs=%s strength=%.4f bank=%d generated=%d\n"
+                "similarity: mean=%.6f max=%.6f above_floor=%d/%d (%.2f%%)\n"
+                "confidence: mean=%.6f max=%.6f\n"
+                "transfer: mean_delta_norm=%.6f relative_delta=%.6f",
                 metadata.block_type,
                 metadata.block_index,
                 selected,
                 strength,
                 reference_bank.shape[1],
+                generated.shape[1],
+                debug_similarity_sum / max(debug_count, 1),
+                debug_similarity_max,
+                debug_above_floor,
+                debug_count,
+                100.0 * debug_above_floor / max(debug_count, 1),
+                debug_confidence_sum / max(debug_count, 1),
+                debug_confidence_max,
+                mean_delta_norm,
+                relative_delta,
             )
+            if collect_spatial:
+                generated_shape = getattr(metadata, "generated_spatial_shape", None)
+                if (
+                    not isinstance(generated_shape, tuple)
+                    or len(generated_shape) != 2
+                    or generated_shape[0] * generated_shape[1] != generated.shape[1]
+                ):
+                    raise ValueError(
+                        "Identity Feature Transfer Final spatial diagnostics require "
+                        "authoritative generated_spatial_shape metadata."
+                    )
+                maps = {
+                    "best_similarity": torch.cat(spatial_best, dim=1),
+                    "confidence": torch.cat(spatial_confidence, dim=1),
+                    "delta_norm": torch.cat(spatial_delta_norm, dim=1),
+                    "winning_reference_token": torch.cat(spatial_winner, dim=1),
+                }
+                confidence_map = maps["confidence"]
+                for percentage in (1, 5, 10):
+                    count = max(1, math.ceil(confidence_map.shape[1] * percentage / 100))
+                    top_indices = confidence_map.topk(count, dim=1).indices
+                    rows = torch.div(top_indices, generated_shape[1], rounding_mode="floor")
+                    columns = top_indices.remainder(generated_shape[1])
+                    box_area = (rows.max(1).values - rows.min(1).values + 1) * (
+                        columns.max(1).values - columns.min(1).values + 1
+                    )
+                    logger.info(
+                        "IFT Final spatial: top=%d%% bbox_area_fraction=%s",
+                        percentage,
+                        tuple(
+                            round(float(value), 6)
+                            for value in box_area.float().div(generated.shape[1])
+                        ),
+                    )
+                if self.debug_output_directory is None:
+                    raise RuntimeError("Identity Feature Transfer Final debug output directory is missing.")
+                prefix = (
+                    f"ift_final_{time.time_ns()}_{metadata.block_type}"
+                    f"{metadata.block_index}"
+                )
+                paths = _save_debug_heatmaps(
+                    maps, generated_shape, self.debug_output_directory, prefix
+                )
+                logger.info(
+                    "IFT Final spatial diagnostics saved: %s",
+                    ", ".join(str(path) for path in paths),
+                )
         return result
 
 
@@ -275,6 +447,9 @@ class NunchakuKleinIdentityFeatureTransferFinal:
             },
             "optional": {
                 "sigmas": ("SIGMAS", {"forceInput": True, "tooltip": "Sigma-aware strength scheduling is not supported by this first Nunchaku slice."}),
+                "debug_spatial": ("BOOLEAN", {"default": False}),
+                "debug_probe_block_type": (["double", "single"], {"default": "double"}),
+                "debug_probe_block_index": ("INT", {"default": 0, "min": 0, "max": 23, "step": 1}),
                 **{f"subject_mask_{index}": ("MASK",) for index in range(1, 9)},
             },
         }
@@ -303,10 +478,23 @@ class NunchakuKleinIdentityFeatureTransferFinal:
         debug=False,
         mask_behavior="focus_only",
         sigmas=None,
+        debug_spatial=False,
+        debug_probe_block_type="double",
+        debug_probe_block_index=0,
         **mask_inputs,
     ):
         enabled = validate_bool(enabled, name="enabled")
         debug = validate_bool(debug, name="debug")
+        debug_spatial = validate_bool(debug_spatial, name="debug_spatial")
+        if debug_probe_block_type not in ("double", "single"):
+            raise ValueError("debug_probe_block_type must be 'double' or 'single'.")
+        maximum_probe_index = 7 if debug_probe_block_type == "double" else 23
+        debug_probe_block_index = validate_int_range(
+            debug_probe_block_index,
+            name="debug_probe_block_index",
+            minimum=0,
+            maximum=maximum_probe_index,
+        )
         adapter = getattr(model.model, "diffusion_model", None)
         if not isinstance(adapter, NunchakuFlux2KleinAdapter):
             raise TypeError(
@@ -345,6 +533,14 @@ class NunchakuKleinIdentityFeatureTransferFinal:
             _prepare_mask(mask_inputs.get(f"subject_mask_{index}"), name=f"subject_mask_{index}")
             for index in range(1, 9)
         )
+        debug_output_directory = None
+        if debug and debug_spatial:
+            import folder_paths
+
+            debug_output_directory = str(
+                Path(folder_paths.get_temp_directory())
+                / "nunchaku_klein_ift_final"
+            )
         callback = KleinIdentityFeatureTransferFinalCallback(
             selected,
             _parse_schedule(double_blocks, 8, name="double_blocks"),
@@ -354,6 +550,10 @@ class NunchakuKleinIdentityFeatureTransferFinal:
             mask_threshold,
             masks,
             debug,
+            debug_spatial,
+            debug_probe_block_type,
+            debug_probe_block_index,
+            debug_output_directory,
         )
         if not any(strength > 0.0 for strength in (*callback.double_strengths, *callback.single_strengths)):
             return (branch,)

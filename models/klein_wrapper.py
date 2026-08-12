@@ -875,7 +875,13 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                     "The installed Nunchaku backend cannot expose FLUX.2 attention callbacks."
                 ) from error
             required_callback_api = (
-                2
+                3
+                if identity_feature_transfer_callbacks is not None
+                and any(
+                    getattr(callback, "debug_spatial", False)
+                    for callback in identity_feature_transfer_callbacks
+                )
+                else 2
                 if direct_ref_controller_callbacks is not None
                 or identity_feature_transfer_callbacks is not None
                 else 1
@@ -928,6 +934,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
                             "pre_attention_callbacks": attention_callbacks.pre_attention_callbacks,
                             "post_attention_callbacks": attention_callbacks.post_attention_callbacks,
                             "generated_token_count": generated_tokens,
+                            "generated_spatial_shape": (grid_height, grid_width),
                             "reference_token_counts": reference_token_counts,
                             "reference_spatial_shapes": reference_spatial_shapes,
                         }

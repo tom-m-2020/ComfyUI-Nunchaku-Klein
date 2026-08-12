@@ -4,6 +4,7 @@ import importlib.util
 import pathlib
 from types import SimpleNamespace
 import sys
+import tempfile
 import unittest
 import weakref
 import gc
@@ -75,6 +76,7 @@ def metadata(block_type="double", block_index=0, refs=(2, 3), shapes=((1, 2), (1
     return SimpleNamespace(
         block_type=block_type, block_index=block_index,
         text_token_count=text, generated_token_count=generated,
+        generated_spatial_shape=(1, generated),
         reference_token_counts=refs, reference_spatial_shapes=shapes,
         logical_image_token_count=logical_image,
         padded_text_token_count=padded_text, padded_image_token_count=padded_image,
@@ -134,7 +136,10 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
             "similarity_floor", "softmax_temperature", "mask_threshold",
             "double_blocks", "single_blocks", "debug", "mask_behavior",
         ])
-        self.assertEqual(list(inputs["optional"]), ["sigmas", *[f"subject_mask_{i}" for i in range(1, 9)]])
+        self.assertEqual(list(inputs["optional"]), [
+            "sigmas", "debug_spatial", "debug_probe_block_type",
+            "debug_probe_block_index", *[f"subject_mask_{i}" for i in range(1, 9)],
+        ])
         self.assertEqual(inputs["required"]["double_blocks"][1]["default"], HARD_DOUBLE)
         self.assertEqual(inputs["required"]["single_blocks"][1]["default"], HARD_SINGLE)
         source = FakeModelPatcher(make_adapter())
@@ -222,6 +227,59 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
         first_result = cb(first, info); second_result = cb(second, info)
         self.assertTrue(torch.equal(first_result, independent_final(first, info, (0,), 1.0, 0.0, 0.1)))
         self.assertTrue(torch.equal(second_result, independent_final(second, info, (0,), 1.0, 0.0, 0.1)))
+
+    def test_debug_summaries_report_matching_transfer_and_empty_mask(self):
+        info = metadata()
+        output = torch.randn(1, info.packed_sequence_length, 4)
+        active = KleinIdentityFeatureTransferFinalCallback(
+            (0,), (1.0,) + (0.0,) * 7, (0.0,) * 24,
+            0.0, 0.1, 0.5, (torch.tensor([[1.0, 0.0]]),) + (None,) * 7, True,
+        )
+        with self.assertLogs(active.__class__.__module__, level="INFO") as captured:
+            self.assertIsNotNone(active(output, info))
+        messages = "\n".join(captured.output)
+        for expected in (
+            "IFT Final mask: double 0 ref=0",
+            "eligible=1/2",
+            "IFT Final: double 0 refs=(0,)",
+            "bank=1 generated=3",
+            "similarity: mean=",
+            "above_floor=",
+            "confidence: mean=",
+            "transfer: mean_delta_norm=",
+            "relative_delta=",
+        ):
+            self.assertIn(expected, messages)
+
+        empty = KleinIdentityFeatureTransferFinalCallback(
+            (0,), (1.0,) + (0.0,) * 7, (0.0,) * 24,
+            0.0, 0.1, 1.0, (torch.zeros(1, 2),) + (None,) * 7, True,
+        )
+        with self.assertLogs(empty.__class__.__module__, level="INFO") as captured:
+            self.assertIsNone(empty(output, info))
+        messages = "\n".join(captured.output)
+        self.assertIn("eligible=0/2", messages)
+        self.assertIn("eligible bank is empty -> no-op", messages)
+
+    def test_spatial_debug_probe_writes_only_the_selected_block(self):
+        info = metadata()
+        output = torch.randn(1, info.packed_sequence_length, 4)
+        with tempfile.TemporaryDirectory() as directory:
+            probe = KleinIdentityFeatureTransferFinalCallback(
+                (0,), (1.0,) + (0.0,) * 7, (0.0,) * 24,
+                0.0, 0.1, 1.0, (None,) * 8, True,
+                True, "double", 0, directory,
+            )
+            with self.assertLogs(probe.__class__.__module__, level="INFO") as captured:
+                probe(output, info)
+            files = tuple(pathlib.Path(directory).glob("*.png"))
+            self.assertEqual(len(files), 4)
+            self.assertTrue(all(path.stat().st_size > 0 for path in files))
+            self.assertIn("top=1% bbox_area_fraction=", "\n".join(captured.output))
+
+            other_block = metadata(block_index=1)
+            probe(output, other_block)
+            self.assertEqual(len(tuple(pathlib.Path(directory).glob("*.png"))), 4)
 
 
 if __name__ == "__main__":

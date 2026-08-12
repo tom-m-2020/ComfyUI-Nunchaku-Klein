@@ -141,15 +141,16 @@ class AttentionCallbackPlumbingTests(unittest.TestCase):
                 transformer_options=options,
             )
 
-    def test_identity_final_requires_spatial_metadata_api_v2(self):
+    def test_identity_final_spatial_probe_requires_generated_grid_api_v3(self):
         adapter, _ = adapter_and_transformer()
         callback = lambda *args: None
+        callback.debug_spatial = True
         options = {
             ATTENTION_CALLBACKS_OPTION: Flux2AttentionCallbacks((), (callback,)),
             IDENTITY_FEATURE_TRANSFER_FINAL_OPTION: (callback,),
         }
-        self.backend.FLUX2_ATTENTION_CALLBACK_API_VERSION = 1
-        with self.assertRaisesRegex(RuntimeError, "callback API v2"):
+        self.backend.FLUX2_ATTENTION_CALLBACK_API_VERSION = 2
+        with self.assertRaisesRegex(RuntimeError, "callback API v3"):
             adapter(
                 torch.zeros((1, 2, 2, 3)),
                 torch.ones((1,)),
