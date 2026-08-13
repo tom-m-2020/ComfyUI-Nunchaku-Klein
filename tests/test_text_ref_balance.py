@@ -107,6 +107,7 @@ def make_adapter(dtype=torch.float32):
         patch_size=1,
         axes_dim=(1, 1, 1, 1),
         dtype=dtype,
+        architecture_profile="test",
     )
     return adapter, transformer
 

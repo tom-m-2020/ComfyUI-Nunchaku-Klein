@@ -60,10 +60,11 @@ class FakeModelPatcher:
         return branch
 
 
-def make_adapter():
+def make_adapter(profile="test"):
     return NunchakuFlux2KleinAdapter(
         FakeTransformer(), in_channels=2, context_dim=4, patch_size=1,
         axes_dim=(1, 1, 1, 1), dtype=torch.float32,
+        architecture_profile=profile,
     )
 
 
@@ -329,6 +330,11 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
         source = FakeModelPatcher(make_adapter())
         with self.assertRaisesRegex(ValueError, "requires debug=true"):
             self.node.apply(source, debug=False, debug_eligible_bank_cap=284)
+
+    def test_4b_is_rejected_before_9b_schedule_installation(self):
+        source = FakeModelPatcher(make_adapter("4B"))
+        with self.assertRaisesRegex(NotImplementedError, "9B-specific"):
+            self.node.apply(source)
 
     def test_diagnostic_feature_pool_uses_spatial_grid_and_pooled_mask(self):
         info = metadata(refs=(16,), shapes=((4, 4),))

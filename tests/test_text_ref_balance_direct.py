@@ -81,6 +81,7 @@ def make_adapter():
         patch_size=1,
         axes_dim=(1, 1, 1, 1),
         dtype=torch.float32,
+        architecture_profile="test",
     )
 
 

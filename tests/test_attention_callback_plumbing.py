@@ -44,7 +44,7 @@ class RecordingTransformer(nn.Module):
         return Result(hidden_states.clone())
 
 
-def adapter_and_transformer():
+def adapter_and_transformer(profile="test"):
     transformer = RecordingTransformer()
     adapter = NunchakuFlux2KleinAdapter(
         transformer,
@@ -53,6 +53,7 @@ def adapter_and_transformer():
         patch_size=1,
         axes_dim=(1, 1, 1, 1),
         dtype=torch.float32,
+        architecture_profile=profile,
     )
     return adapter, transformer
 
@@ -95,6 +96,11 @@ class AttentionCallbackPlumbingTests(unittest.TestCase):
         adapter, transformer = adapter_and_transformer()
         run(adapter, batch=2)
         self.assertEqual(transformer.kwargs, [None, None])
+
+    def test_4b_reference_editing_is_fail_closed(self):
+        adapter, _ = adapter_and_transformer("4B")
+        with self.assertRaisesRegex(NotImplementedError, "not qualified yet"):
+            run(adapter, references=((1, 2),))
 
     def test_active_callbacks_require_capability(self):
         adapter, _ = adapter_and_transformer()

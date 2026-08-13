@@ -63,6 +63,10 @@ class NunchakuKleinLoraLoader:
                 "Nunchaku Klein LoRA loading requires a MODEL from "
                 "NunchakuKleinModelLoader."
             )
+        if adapter.architecture_profile == "4B":
+            raise NotImplementedError(
+                "FLUX.2 Klein 4B LoRA loading is not qualified yet."
+            )
         inherited = _get_inherited_lora_specs(model)
 
         if strength == 0.0:

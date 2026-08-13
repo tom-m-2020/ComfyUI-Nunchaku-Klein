@@ -629,6 +629,11 @@ class NunchakuKleinIdentityFeatureTransferFinal:
                 "Nunchaku FLUX.2 Klein Identity Feature Transfer (Final) "
                 "requires a MODEL from NunchakuKleinModelLoader."
             )
+        if enabled and adapter.architecture_profile == "4B":
+            raise NotImplementedError(
+                "Identity Feature Transfer Final is not qualified for "
+                "FLUX.2 Klein 4B; its current block schedules are 9B-specific."
+            )
         branch = model.clone()
         adapter.shared_lora_state.register_patcher(branch)
         if not enabled:

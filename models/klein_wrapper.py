@@ -436,6 +436,7 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         patch_size: int,
         axes_dim: tuple[int, ...],
         dtype: torch.dtype,
+        architecture_profile: str,
     ) -> None:
         super().__init__()
         _get_nunchaku_tensor_dictionaries(transformer)
@@ -445,6 +446,8 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             raise ValueError(
                 f"FLUX.2 Klein requires four RoPE axes, got {list(axes_dim)}."
             )
+        if not isinstance(architecture_profile, str) or not architecture_profile:
+            raise ValueError("architecture_profile must be a non-empty string.")
 
         self.transformer = transformer
         self.in_channels = in_channels
@@ -452,7 +455,12 @@ class NunchakuFlux2KleinAdapter(nn.Module):
         self.patch_size = patch_size
         self.axes_dim = axes_dim
         self.dtype = dtype
+        self._architecture_profile = architecture_profile
         self.shared_lora_state = get_or_create_shared_lora_state(transformer)
+
+    @property
+    def architecture_profile(self) -> str:
+        return self._architecture_profile
 
     def _apply(self, fn, recurse: bool = True):
         # Nunchaku 1.2.1 keeps LoRA originals/caches in private plain dicts.
@@ -723,9 +731,13 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             )
         ref_latents = kwargs.get("ref_latents")
         if ref_latents is not None:
+            if self.architecture_profile == "4B":
+                raise NotImplementedError(
+                    "FLUX.2 Klein 4B reference editing is not qualified yet."
+                )
             ref_method = kwargs.get("ref_latents_method")
             # Current ComfyUI Flux2 uses "index". None means its model-config
-            # default, which is also "index" for the validated Klein 9B path.
+            # default, which is also "index" for both validated Klein profiles.
             if ref_method not in (None, "index"):
                 raise NotImplementedError(
                     "This adapter supports only ComfyUI's FLUX.2 Klein "

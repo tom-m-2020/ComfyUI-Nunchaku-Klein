@@ -1,5 +1,6 @@
 import inspect
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -21,6 +22,21 @@ from ..models.klein_wrapper import (
 
 _WRAPPER_KEY = "nunchaku_klein_force_full_load"
 _CLONE_CALLBACK_KEY = "nunchaku_klein_shared_lora_state"
+
+
+@dataclass(frozen=True)
+class KleinArchitectureProfile:
+    name: str
+    context_dim: int
+    num_heads: int
+    num_double_blocks: int
+    num_single_blocks: int
+
+
+KLEIN_ARCHITECTURE_PROFILES = (
+    KleinArchitectureProfile("4B", 7680, 24, 5, 20),
+    KleinArchitectureProfile("9B", 12288, 32, 8, 24),
+)
 
 
 def _force_full_load(executor, model, noise_shape, conds, *args, **kwargs):
@@ -135,7 +151,9 @@ def _parse_json_object(metadata: dict[str, str], key: str) -> dict:
     return value
 
 
-def _validated_comfy_config(metadata: dict[str, str]) -> dict:
+def _validated_comfy_config(
+    metadata: dict[str, str],
+) -> tuple[KleinArchitectureProfile, dict]:
     if metadata.get("model_class") != "NunchakuFlux2Transformer2DModel":
         raise ValueError(
             "Unsupported model metadata: model_class must be "
@@ -145,22 +163,21 @@ def _validated_comfy_config(metadata: dict[str, str]) -> dict:
     config = _parse_json_object(metadata, "config")
     quantization = _parse_json_object(metadata, "quantization_config")
 
-    expected = {
+    shared_expected = {
         "_class_name": "Flux2Transformer2DModel",
         "in_channels": 128,
         "attention_head_dim": 128,
-        "joint_attention_dim": 12288,
-        "num_attention_heads": 32,
-        "num_layers": 8,
-        "num_single_layers": 24,
         "patch_size": 1,
         "axes_dims_rope": [32, 32, 32, 32],
         "rope_theta": 2000,
         "guidance_embeds": False,
+        "eps": 1e-6,
+        "mlp_ratio": 3.0,
+        "timestep_guidance_channels": 256,
     }
     mismatches = {
         key: {"expected": value, "actual": config.get(key)}
-        for key, value in expected.items()
+        for key, value in shared_expected.items()
         if config.get(key) != value
     }
     if config.get("out_channels") not in (None, 128):
@@ -181,13 +198,22 @@ def _validated_comfy_config(metadata: dict[str, str]) -> dict:
             }
     for part in ("weight", "activation"):
         part_config = quantization.get(part)
-        if not isinstance(part_config, dict) or part_config.get("dtype") != "int4":
-            mismatches[f"quantization_config.{part}.dtype"] = {
-                "expected": "int4",
-                "actual": (
-                    None if not isinstance(part_config, dict) else part_config.get("dtype")
-                ),
-            }
+        for key, value in {
+            "dtype": "int4",
+            "group_size": 64,
+            "scale_dtype": None,
+        }.items():
+            if (
+                not isinstance(part_config, dict)
+                or key not in part_config
+                or part_config[key] != value
+            ):
+                mismatches[f"quantization_config.{part}.{key}"] = {
+                    "expected": value,
+                    "actual": (
+                        None if not isinstance(part_config, dict) else part_config.get(key)
+                    ),
+                }
 
     if mismatches:
         raise ValueError(
@@ -195,8 +221,30 @@ def _validated_comfy_config(metadata: dict[str, str]) -> dict:
             f"{json.dumps(mismatches, sort_keys=True)}"
         )
 
+    matching_profiles = [
+        profile
+        for profile in KLEIN_ARCHITECTURE_PROFILES
+        if config.get("joint_attention_dim") == profile.context_dim
+        and config.get("num_attention_heads") == profile.num_heads
+        and config.get("num_layers") == profile.num_double_blocks
+        and config.get("num_single_layers") == profile.num_single_blocks
+    ]
+    if len(matching_profiles) != 1:
+        actual = {
+            "joint_attention_dim": config.get("joint_attention_dim"),
+            "num_attention_heads": config.get("num_attention_heads"),
+            "num_layers": config.get("num_layers"),
+            "num_single_layers": config.get("num_single_layers"),
+        }
+        raise ValueError(
+            "Unsupported FLUX.2 Klein architecture profile: "
+            f"{json.dumps(actual, sort_keys=True)}. Expected exactly one of "
+            f"{[profile.name for profile in KLEIN_ARCHITECTURE_PROFILES]}."
+        )
+    profile = matching_profiles[0]
+
     hidden_size = config["num_attention_heads"] * config["attention_head_dim"]
-    return {
+    comfy_config = {
         "image_model": "flux2",
         "in_channels": config["in_channels"],
         "out_channels": config["out_channels"] or config["in_channels"],
@@ -211,6 +259,7 @@ def _validated_comfy_config(metadata: dict[str, str]) -> dict:
         "guidance_embed": config["guidance_embeds"],
         "disable_unet_model_creation": True,
     }
+    return profile, comfy_config
 
 
 def _read_metadata(model_path: Path) -> dict[str, str]:
@@ -247,13 +296,14 @@ class NunchakuKleinModelLoader:
             folder_paths.get_full_path_or_raise("diffusion_models", model_name)
         )
         metadata = _read_metadata(model_path)
-        comfy_config = _validated_comfy_config(metadata)
+        profile, comfy_config = _validated_comfy_config(metadata)
 
         load_device = model_management.get_torch_device()
         offload_device = model_management.unet_offload_device()
         if not isinstance(load_device, torch.device) or load_device.type != "cuda":
             raise RuntimeError(
-                f"The validated 9B path requires a CUDA load device, got {load_device!r}."
+                "The validated FLUX.2 Klein path requires a CUDA load device, "
+                f"got {load_device!r}."
             )
         if not isinstance(offload_device, torch.device):
             raise RuntimeError(
@@ -276,8 +326,10 @@ class NunchakuKleinModelLoader:
                 offload=False,
                 return_metadata=True,
             )
-            returned_config = _validated_comfy_config(returned_metadata)
-            if returned_config != comfy_config:
+            returned_profile, returned_config = _validated_comfy_config(
+                returned_metadata
+            )
+            if returned_profile != profile or returned_config != comfy_config:
                 raise RuntimeError(
                     "Nunchaku returned metadata that differs from the "
                     "validated safetensors header."
@@ -290,6 +342,7 @@ class NunchakuKleinModelLoader:
                 patch_size=comfy_config["patch_size"],
                 axes_dim=tuple(comfy_config["axes_dim"]),
                 dtype=dtype,
+                architecture_profile=profile.name,
             )
 
             model_config = comfy.supported_models.Flux2(comfy_config)

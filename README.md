@@ -8,6 +8,10 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > **NOTE**: In order to use "**Direct K/V**" nodes or **Identity Feature Transfer**, you'll have to install the newer fork of Vitoom Nunchaku.
 
 ## News
+- **2026-08-14**
+  - Added strictly profiled **4B basic T2I support** with native Qwen3 4B conditioning.
+  - 4B LoRA, reference editing, Direct K/V nodes, and Identity Feature Transfer Final
+    remain explicitly unavailable until their later qualification stages complete.
 - **2026-08-12**
   - **v0.9.0**
     - **Identity Feature Transfer Final** (`zero_unmasked_tokens` and `Sigma-aware strength scheduling` not supported.) (**Requires new nunchaku backend APIv3**.)
@@ -37,7 +41,7 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
   - **Multi-reference editing** support
   - First experimental implementation of **Klein Text Enhancer** node.
     - **NOTE**: Our "Enhancer" nodes **do not work exactly the same as the [original Flux2Klein-Enhancer](https://github.com/capitan01R/ComfyUI-Flux2Klein-Enhancer)**, but the behavior is close. Still experimental.
-  - **4B not supported yet**.
+  - **4B was not supported in this release**.
 
 **Observed**: repeated Nunchaku FLUX.2 Klein executions can produce materially different outputs despite identical workflow inputs and seed. This also reproduces in plain T2I without references, Ref Latent Weight, or LoRA, so it is not specific to those target features.
 
@@ -49,7 +53,8 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] Klein Enhancer
 - [x] Differential Diffusion (Flux.2-Klein is just not good with this.)
 - [ ] ~~Normalized Attention Guidance~~
-- [ ] 4B support
+- [x] 4B basic T2I support
+- [ ] 4B LoRA and reference/edit feature qualification
 
 ## Installation
 
