@@ -47,8 +47,8 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] LoRA support
 - [x] Reference Edit support
 - [x] Klein Enhancer
-- [ ] Test Differential Diffusion / if not: SpotEdit
-- [ ] ~~Test Normalized Attention Guidance~~
+- [x] Differential Diffusion (Flux.2-Klein is just not good with this.)
+- [ ] ~~Normalized Attention Guidance~~
 - [ ] 4B support
 
 ## Installation
