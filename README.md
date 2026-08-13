@@ -10,8 +10,9 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 ## News
 - **2026-08-14**
   - Added strictly profiled **4B basic T2I support** with native Qwen3 4B conditioning.
-  - 4B LoRA, reference editing, Direct K/V nodes, and Identity Feature Transfer Final
-    remain explicitly unavailable until their later qualification stages complete.
+  - Added profile-aware **4B LoRA support**.
+  - 4B reference editing, Direct K/V nodes, and Identity Feature Transfer Final remain
+    explicitly unavailable until their later qualification stages complete.
 - **2026-08-12**
   - **v0.9.0**
     - **Identity Feature Transfer Final** (`zero_unmasked_tokens` and `Sigma-aware strength scheduling` not supported.) (**Requires new nunchaku backend APIv3**.)
@@ -54,7 +55,8 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] Differential Diffusion (Flux.2-Klein is just not good with this.)
 - [ ] ~~Normalized Attention Guidance~~
 - [x] 4B basic T2I support
-- [ ] 4B LoRA and reference/edit feature qualification
+- [x] 4B LoRA support
+- [ ] 4B reference/edit feature qualification
 
 ## Installation
 

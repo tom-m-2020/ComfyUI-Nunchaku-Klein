@@ -30,6 +30,23 @@ def _get_inherited_lora_specs(model) -> tuple[KleinLoraSpec, ...]:
     return inherited
 
 
+def _validate_lora_profile(metadata, profile: str, lora_path: Path) -> None:
+    base_model = (metadata or {}).get("ss_base_model_version")
+    if base_model is None:
+        return
+    normalized = base_model.lower().replace("-", "_")
+    expected = ("flux2", "klein", profile.lower())
+    if not all(part in normalized for part in expected):
+        raise ValueError(
+            f"LoRA {lora_path} targets {base_model!r}, not "
+            f"FLUX.2 Klein {profile}."
+        )
+
+
+def _lora_cache_identity(lora_path: Path, stat, profile: str) -> tuple:
+    return (str(lora_path), stat.st_size, stat.st_mtime_ns, profile)
+
+
 class NunchakuKleinLoraLoader:
     def __init__(self):
         self.loaded_lora = None
@@ -50,9 +67,7 @@ class NunchakuKleinLoraLoader:
     RETURN_TYPES = ("MODEL",)
     FUNCTION = "load_lora"
     CATEGORY = "loaders"
-    DESCRIPTION = (
-        "Loads a FLUX.2 Klein 9B LoRA as branch-local execution state."
-    )
+    DESCRIPTION = "Loads a compatible FLUX.2 Klein LoRA as branch-local execution state."
 
     def load_lora(self, model, lora_name: str, strength: float):
         if not math.isfinite(strength):
@@ -63,10 +78,7 @@ class NunchakuKleinLoraLoader:
                 "Nunchaku Klein LoRA loading requires a MODEL from "
                 "NunchakuKleinModelLoader."
             )
-        if adapter.architecture_profile == "4B":
-            raise NotImplementedError(
-                "FLUX.2 Klein 4B LoRA loading is not qualified yet."
-            )
+        profile = adapter.architecture_profile
         inherited = _get_inherited_lora_specs(model)
 
         if strength == 0.0:
@@ -87,7 +99,7 @@ class NunchakuKleinLoraLoader:
             folder_paths.get_full_path_or_raise("loras", lora_name)
         )
         stat = lora_path.stat()
-        fingerprint = (str(lora_path), stat.st_size, stat.st_mtime_ns)
+        fingerprint = _lora_cache_identity(lora_path, stat, profile)
         if self.loaded_lora is not None and self.loaded_lora[0] == fingerprint:
             state_dict, metadata = self.loaded_lora[1:]
         else:
@@ -101,14 +113,7 @@ class NunchakuKleinLoraLoader:
             if not all(torch.is_tensor(tensor) for tensor in raw_state_dict.values()):
                 raise ValueError(f"LoRA {lora_path} contains non-tensor weights.")
 
-            base_model = (metadata or {}).get("ss_base_model_version")
-            if base_model is not None:
-                normalized = base_model.lower().replace("-", "_")
-                if not all(part in normalized for part in ("flux2", "klein", "9b")):
-                    raise ValueError(
-                        f"LoRA {lora_path} targets {base_model!r}, not "
-                        "FLUX.2 Klein 9B."
-                    )
+            _validate_lora_profile(metadata, profile, lora_path)
 
             try:
                 state_dict = normalize_klein_lora_state(raw_state_dict)
@@ -129,12 +134,14 @@ class NunchakuKleinLoraLoader:
                 lora_path,
                 quantized,
                 suffixes=(".proj_down", ".proj_up"),
+                profile=profile,
             )
             self._validate_pairs(
                 transformer,
                 lora_path,
                 unquantized,
                 suffixes=(".lora_A.weight", ".lora_B.weight"),
+                profile=profile,
             )
             self.loaded_lora = (fingerprint, state_dict, metadata)
 
@@ -153,7 +160,7 @@ class NunchakuKleinLoraLoader:
         return (branch,)
 
     @staticmethod
-    def _validate_pairs(transformer, lora_path, weights, *, suffixes):
+    def _validate_pairs(transformer, lora_path, weights, *, suffixes, profile):
         first_suffix, second_suffix = suffixes
         first_keys = sorted(
             key for key in weights if key.endswith(first_suffix)
@@ -190,7 +197,7 @@ class NunchakuKleinLoraLoader:
                 or second.shape[0] != module.out_features
             ):
                 raise ValueError(
-                    f"LoRA pair {prefix!r} is incompatible with Klein 9B: "
+                    f"LoRA pair {prefix!r} is incompatible with Klein {profile}: "
                     f"got {list(first.shape)} and {list(second.shape)}, "
                     f"expected input/output dimensions "
                     f"{module.in_features}/{module.out_features}."

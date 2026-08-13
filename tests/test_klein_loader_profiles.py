@@ -6,9 +6,6 @@ import unittest
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
-import torch
-from torch import nn
-
 
 TARGET = pathlib.Path(__file__).resolve().parents[1]
 COMFY = pathlib.Path(r"C:\Users\Tom-M\data\a\ai\apps\ComfyUI-dev")
@@ -26,11 +23,9 @@ from nunchaku_klein_loader_profiles_test.nodes.klein_loader import (
     KLEIN_ARCHITECTURE_PROFILES,
     _validated_comfy_config,
 )
-from nunchaku_klein_loader_profiles_test.models.klein_wrapper import (
-    NunchakuFlux2KleinAdapter,
-)
 from nunchaku_klein_loader_profiles_test.nodes.klein_lora import (
-    NunchakuKleinLoraLoader,
+    _lora_cache_identity,
+    _validate_lora_profile,
 )
 
 
@@ -115,21 +110,24 @@ class KleinLoaderProfileTests(unittest.TestCase):
         ):
             _validated_comfy_config(value)
 
-    def test_4b_lora_is_fail_closed_before_file_loading(self):
-        transformer = nn.Module()
-        transformer.offload = False
-        adapter = NunchakuFlux2KleinAdapter(
-            transformer,
-            in_channels=128,
-            context_dim=7680,
-            patch_size=1,
-            axes_dim=(32, 32, 32, 32),
-            dtype=torch.bfloat16,
-            architecture_profile="4B",
+    def test_lora_metadata_is_profile_aware(self):
+        path = pathlib.Path("example.safetensors")
+        _validate_lora_profile(
+            {"ss_base_model_version": "flux2_klein_4b"}, "4B", path
         )
-        model = SimpleNamespace(model=SimpleNamespace(diffusion_model=adapter))
-        with self.assertRaisesRegex(NotImplementedError, "not qualified yet"):
-            NunchakuKleinLoraLoader().load_lora(model, "unused", 1.0)
+        _validate_lora_profile(None, "4B", path)
+        with self.assertRaisesRegex(ValueError, "not FLUX.2 Klein 9B"):
+            _validate_lora_profile(
+                {"ss_base_model_version": "flux2_klein_4b"}, "9B", path
+            )
+
+    def test_lora_cache_identity_includes_profile(self):
+        path = pathlib.Path("example.safetensors")
+        stat = SimpleNamespace(st_size=10, st_mtime_ns=20)
+        self.assertNotEqual(
+            _lora_cache_identity(path, stat, "4B"),
+            _lora_cache_identity(path, stat, "9B"),
+        )
 
 
 if __name__ == "__main__":
