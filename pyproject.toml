@@ -1,7 +1,7 @@
 [project]
 name = "nunchaku-klein"
 description = "NOTE: In order to use Direct K/V nodes, you'll have to install our extended version of Vitoom Nunchaku. Check README for more detail. ComfyUI custom node for Nunchaku Flux.2 Klein, independent of official ComyUI-Nunchaku. Requires tonera's Vitoom Nunchaku. Added features such as Klein Enhancer ported, or compatibility versions."
-version = "0.9.1"
+version = "1.0.0"
 license = {file = "LICENSE"}
 
 # classifiers = [

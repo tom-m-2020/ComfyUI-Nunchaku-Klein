@@ -8,11 +8,13 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > **NOTE**: In order to use "**Direct K/V**" nodes or **Identity Feature Transfer**, you'll have to install the newer fork of Vitoom Nunchaku.
 
 ## News
+- **2026-08-19** **v1.0.0**
+  - Added ordinary single- and multi-reference **4B editing support**.
+  - 4B Enhancer compatibility, Direct K/V nodes, and Identity Feature Transfer Final
+    remain explicitly **unavailable** until their later qualification stages complete.
 - **2026-08-14**
   - Added strictly profiled **4B basic T2I support** with native Qwen3 4B conditioning.
   - Added profile-aware **4B LoRA support**.
-  - 4B reference editing, Direct K/V nodes, and Identity Feature Transfer Final remain
-    explicitly unavailable until their later qualification stages complete.
 - **2026-08-12**
   - **v0.9.0**
     - **Identity Feature Transfer Final** (`zero_unmasked_tokens` and `Sigma-aware strength scheduling` not supported.) (**Requires new nunchaku backend APIv3**.)
@@ -52,11 +54,14 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] LoRA support
 - [x] Reference Edit support
 - [x] Klein Enhancer
-- [x] Differential Diffusion (Flux.2-Klein is just not good with this.)
-- [ ] ~~Normalized Attention Guidance~~
+- [x] Differential Diffusion (Flux.2-Klein is just not good with this by default.)
 - [x] 4B basic T2I support
 - [x] 4B LoRA support
-- [ ] 4B reference/edit feature qualification
+- [x] 4B ordinary reference/edit support
+- [ ] 4B Enhancers
+- [ ] Nunchaku Power LoRA Loader
+- [ ] SpotEdit
+- [ ] ~~Normalized Attention Guidance~~
 
 ## Installation
 

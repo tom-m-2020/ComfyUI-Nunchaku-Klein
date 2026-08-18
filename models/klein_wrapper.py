@@ -731,10 +731,6 @@ class NunchakuFlux2KleinAdapter(nn.Module):
             )
         ref_latents = kwargs.get("ref_latents")
         if ref_latents is not None:
-            if self.architecture_profile == "4B":
-                raise NotImplementedError(
-                    "FLUX.2 Klein 4B reference editing is not qualified yet."
-                )
             ref_method = kwargs.get("ref_latents_method")
             # Current ComfyUI Flux2 uses "index". None means its model-config
             # default, which is also "index" for both validated Klein profiles.

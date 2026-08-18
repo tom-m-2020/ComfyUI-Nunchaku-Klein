@@ -97,10 +97,64 @@ class AttentionCallbackPlumbingTests(unittest.TestCase):
         run(adapter, batch=2)
         self.assertEqual(transformer.kwargs, [None, None])
 
-    def test_4b_reference_editing_is_fail_closed(self):
-        adapter, _ = adapter_and_transformer("4B")
-        with self.assertRaisesRegex(NotImplementedError, "not qualified yet"):
-            run(adapter, references=((1, 2),))
+    def test_4b_reference_editing_uses_shared_ordered_layout(self):
+        adapter, transformer = adapter_and_transformer("4B")
+        run(adapter, references=((1, 2), (2, 1)))
+        call = transformer.kwargs[0]
+        self.assertIsNone(call)
+
+    def test_4b_reference_layout_metadata_is_runtime_derived(self):
+        adapter, transformer = adapter_and_transformer("4B")
+        callback = lambda *args: None
+        callbacks = Flux2AttentionCallbacks((callback,), ())
+        self.backend.FLUX2_ATTENTION_CALLBACK_API_VERSION = 1
+        output = run(
+            adapter,
+            batch=2,
+            references=((1, 2), (2, 1), (3, 2)),
+            callbacks=callbacks,
+        )
+        self.assertEqual(tuple(output.shape), (2, 2, 2, 3))
+        self.assertEqual(len(transformer.kwargs), 2)
+        for runtime in transformer.kwargs:
+            self.assertEqual(runtime["generated_token_count"], 6)
+            self.assertEqual(runtime["generated_spatial_shape"], (2, 3))
+            self.assertEqual(runtime["reference_token_counts"], (2, 2, 6))
+            self.assertEqual(
+                runtime["reference_spatial_shapes"], ((1, 2), (2, 1), (3, 2))
+            )
+
+    def test_malformed_references_fail_before_transformer(self):
+        adapter, transformer = adapter_and_transformer("4B")
+        x = torch.zeros((1, 2, 2, 3))
+        timestep = torch.ones((1,))
+        context = torch.zeros((1, 5, 4))
+        cases = (
+            ([], TypeError, "non-empty list"),
+            ([torch.zeros((1, 3, 1, 1))], ValueError, "2 channels"),
+            ([torch.zeros((2, 2, 1, 1))], ValueError, "batch must match"),
+            ([torch.zeros((1, 2, 0, 1))], ValueError, "must be positive"),
+            ([torch.zeros((1, 2, 1, 1), dtype=torch.float64)], ValueError, "device/dtype"),
+        )
+        for references, error, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(error, message):
+                    adapter(
+                        x,
+                        timestep,
+                        context,
+                        ref_latents=references,
+                        ref_latents_method="index",
+                    )
+        with self.assertRaisesRegex(NotImplementedError, "only.*'index'"):
+            adapter(
+                x,
+                timestep,
+                context,
+                ref_latents=[torch.zeros((1, 2, 1, 1))],
+                ref_latents_method="concat",
+            )
+        self.assertEqual(transformer.kwargs, [])
 
     def test_active_callbacks_require_capability(self):
         adapter, _ = adapter_and_transformer()
