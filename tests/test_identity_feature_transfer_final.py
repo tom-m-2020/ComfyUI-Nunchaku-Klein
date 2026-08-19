@@ -42,9 +42,12 @@ from nunchaku_klein_identity_final_test.nodes.enhancer.identity_feature_transfer
 
 
 class FakeTransformer(nn.Module):
-    def __init__(self):
+    def __init__(self, profile="9B"):
         super().__init__()
         self.offload = False
+        double, single = (5, 20) if profile == "4B" else (8, 24)
+        self.transformer_blocks = [object()] * double
+        self.single_transformer_blocks = [object()] * single
 
 
 class FakeModelPatcher:
@@ -62,7 +65,7 @@ class FakeModelPatcher:
 
 def make_adapter(profile="test"):
     return NunchakuFlux2KleinAdapter(
-        FakeTransformer(), in_channels=2, context_dim=4, patch_size=1,
+        FakeTransformer(profile), in_channels=2, context_dim=4, patch_size=1,
         axes_dim=(1, 1, 1, 1), dtype=torch.float32,
         architecture_profile=profile,
     )
@@ -331,10 +334,85 @@ class IdentityFeatureTransferFinalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires debug=true"):
             self.node.apply(source, debug=False, debug_eligible_bank_cap=284)
 
-    def test_4b_is_rejected_before_9b_schedule_installation(self):
-        source = FakeModelPatcher(make_adapter("4B"))
-        with self.assertRaisesRegex(NotImplementedError, "9B-specific"):
-            self.node.apply(source)
+    def test_profile_topology_resolves_schedule_lengths_without_changing_defaults(self):
+        expected_active_single = {0, 1, 3, 4, 6, 7, 8, 10, 13}
+        for profile, double_count, single_count in (("4B", 5, 20), ("9B", 8, 24)):
+            with self.subTest(profile=profile):
+                source = FakeModelPatcher(make_adapter(profile))
+                branch = self.node.apply(source)[0]
+                final = branch.model_options["transformer_options"][
+                    ATTENTION_CALLBACKS_OPTION
+                ].post_attention_callbacks[-1]
+                self.assertEqual(len(final.double_strengths), double_count)
+                self.assertEqual(len(final.single_strengths), single_count)
+                self.assertEqual(final.double_strengths, (0.55,) * double_count)
+                self.assertEqual(
+                    {index for index, value in enumerate(final.single_strengths) if value > 0},
+                    expected_active_single,
+                )
+
+    def test_real_4b_and_9b_feature_widths_execute_same_post_attention_contract(self):
+        for profile, heads, double_count, single_count in (
+            ("4B", 24, 5, 20),
+            ("9B", 32, 8, 24),
+        ):
+            for block_type, indexes in (
+                ("double", (0, double_count // 2, double_count - 1)),
+                ("single", (0, 10, single_count - 1)),
+            ):
+                for block_index in indexes:
+                    with self.subTest(profile=profile, block_type=block_type, block=block_index):
+                        info = metadata(block_type, block_index, refs=(2, 6), shapes=((1, 2), (2, 3)))
+                        info.head_count = heads
+                        info.head_dimension = 128
+                        output = torch.randn(
+                            1, info.packed_sequence_length, heads * 128,
+                            dtype=torch.float16,
+                        )
+                        strengths = [0.0] * (double_count if block_type == "double" else single_count)
+                        strengths[block_index] = 0.5
+                        cb = KleinIdentityFeatureTransferFinalCallback(
+                            None,
+                            tuple(strengths) if block_type == "double" else (0.0,) * double_count,
+                            tuple(strengths) if block_type == "single" else (0.0,) * single_count,
+                            0.0, 0.1, 1.0, (None,) * 8,
+                        )
+                        before = output.clone()
+                        result = cb(output, info)
+                        generated, _ = ranges(info)
+                        outside = torch.ones(info.packed_sequence_length, dtype=torch.bool)
+                        outside[generated[0]:generated[1]] = False
+                        self.assertEqual(result.shape, output.shape)
+                        self.assertEqual(result.dtype, output.dtype)
+                        self.assertTrue(torch.equal(result[:, outside], before[:, outside]))
+                        self.assertTrue(torch.equal(output, before))
+                        self.assertFalse(torch.equal(result[:, generated[0]:generated[1]], before[:, generated[0]:generated[1]]))
+
+    def test_missing_references_and_impossible_boundaries_fail_or_noop_safely(self):
+        empty = metadata(refs=(), shapes=())
+        output = torch.randn(1, empty.packed_sequence_length, 4)
+        before = output.clone()
+        self.assertIsNone(callback(selected=None)(output, empty))
+        self.assertTrue(torch.equal(output, before))
+
+        bad = metadata()
+        bad.logical_image_token_count += 1
+        output = torch.randn(1, bad.packed_sequence_length, 4)
+        before = output.clone()
+        with self.assertRaises(ValueError):
+            callback(selected=(0,))(output, bad)
+        self.assertTrue(torch.equal(output, before))
+
+    def test_reference_selection_changes_only_the_selected_bank(self):
+        info = metadata(refs=(2, 3), shapes=((1, 2), (1, 3)))
+        output = torch.randn(1, info.packed_sequence_length, 4)
+        first = callback(selected=(0,))(output, info)
+        second = callback(selected=(1,))(output, info)
+        generated, _ = ranges(info)
+        self.assertFalse(torch.equal(
+            first[:, generated[0]:generated[1]],
+            second[:, generated[0]:generated[1]],
+        ))
 
     def test_diagnostic_feature_pool_uses_spatial_grid_and_pooled_mask(self):
         info = metadata(refs=(16,), shapes=((4, 4),))

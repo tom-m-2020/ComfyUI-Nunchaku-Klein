@@ -9,6 +9,9 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 
 ## News
 - **2026-08-19**
+  - **v1.1.0**
+    - **4B Direct K/V callback family**
+    - **4B Identity Feature Transfer Final**
   - **v1.0.1**
     - **4B Multi Reference Latent**
     - **4B Mask Ref Controller**
@@ -16,10 +19,8 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
     - **4B Klein Enhancer**
     - **4B Sectioned Encoder**
     - **4B Detail Controller**
-    - **4B Direct K/V callback family**
   - **v1.0.0**
     - Added ordinary single- and multi-reference **4B editing support**.
-    - Identity Feature Transfer Final remains explicitly **unavailable for 4B** until its separate schedule qualification completes.
 - **2026-08-14**
   - Added strictly profiled **4B basic T2I support** with native Qwen3 4B conditioning.
   - Added profile-aware **4B LoRA support**.
@@ -129,7 +130,6 @@ Only a limited number of versions are supported now.
   - Ref Latent Weight (Direct K/V)
   - Text/Ref Balance (Direct K/V)
   - Ref Latent Controller (Direct K/V)
-- **9B only**
   - Identity Feature Transfer Final
 
 ## Related Projects

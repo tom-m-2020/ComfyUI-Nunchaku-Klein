@@ -629,16 +629,32 @@ class NunchakuKleinIdentityFeatureTransferFinal:
                 "Nunchaku FLUX.2 Klein Identity Feature Transfer (Final) "
                 "requires a MODEL from NunchakuKleinModelLoader."
             )
-        if enabled and adapter.architecture_profile == "4B":
-            raise NotImplementedError(
-                "Identity Feature Transfer Final is not qualified for "
-                "FLUX.2 Klein 4B; its current block schedules are 9B-specific."
-            )
         branch = model.clone()
         adapter.shared_lora_state.register_patcher(branch)
         if not enabled:
             return (branch,)
 
+        transformer = adapter.transformer
+        double_block_count = len(getattr(transformer, "transformer_blocks", ()))
+        single_block_count = len(
+            getattr(transformer, "single_transformer_blocks", ())
+        )
+        if double_block_count <= 0 or single_block_count <= 0:
+            raise RuntimeError(
+                "Identity Feature Transfer Final requires positive live double "
+                "and single transformer block inventories."
+            )
+        maximum_probe_index = (
+            double_block_count - 1
+            if debug_probe_block_type == "double"
+            else single_block_count - 1
+        )
+        debug_probe_block_index = validate_int_range(
+            debug_probe_block_index,
+            name="debug_probe_block_index",
+            minimum=0,
+            maximum=maximum_probe_index,
+        )
         reference_index = validate_int_range(reference_index, name="reference_index", minimum=0, maximum=15)
         if preset not in (*PRESETS, "custom"):
             raise ValueError(f"Unsupported preset {preset!r}.")
@@ -676,8 +692,12 @@ class NunchakuKleinIdentityFeatureTransferFinal:
             )
         callback = KleinIdentityFeatureTransferFinalCallback(
             selected,
-            _parse_schedule(double_blocks, 8, name="double_blocks"),
-            _parse_schedule(single_blocks, 24, name="single_blocks"),
+            _parse_schedule(
+                double_blocks, double_block_count, name="double_blocks"
+            ),
+            _parse_schedule(
+                single_blocks, single_block_count, name="single_blocks"
+            ),
             similarity_floor,
             softmax_temperature,
             mask_threshold,
