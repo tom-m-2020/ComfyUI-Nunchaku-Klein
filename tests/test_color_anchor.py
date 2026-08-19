@@ -278,6 +278,68 @@ class ColorAnchorTests(unittest.TestCase):
             value = invoke(callback, value, 1.0)
         self.assertAlmostEqual(float(value.mean()), 1.75)
 
+    def test_malformed_node_inputs_fail_closed(self):
+        model = FakeModelPatcher()
+        reference = torch.ones((1, 2, 2, 2))
+        valid = conditioning(reference)
+        cases = (
+            ({"strength": -0.1}, ValueError, "strength"),
+            ({"strength": 1.1}, ValueError, "strength"),
+            ({"ramp_curve": 0.4}, ValueError, "ramp_curve"),
+            ({"ref_index": 64}, ValueError, "ref_index"),
+            ({"channel_weights": "invalid"}, ValueError, "channel_weights"),
+            ({"debug": 1}, TypeError, "debug"),
+        )
+        for kwargs, error, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(error, message):
+                    self.node.apply(model, valid, **kwargs)
+
+        with self.assertRaisesRegex(TypeError, "conditioning"):
+            self.node.apply(model, None)
+        with self.assertRaisesRegex(TypeError, "torch.Tensor"):
+            self.node.apply(model, conditioning(object()))
+        with self.assertRaisesRegex(ValueError, "BCHW"):
+            self.node.apply(model, conditioning(torch.ones((2, 2, 2))))
+        with self.assertRaisesRegex(TypeError, "clone"):
+            self.node.apply(object(), valid)
+        with self.assertRaisesRegex(TypeError, POST_CFG_OPTION):
+            self.node.apply(
+                FakeModelPatcher({POST_CFG_OPTION: object()}), valid
+            )
+
+    def test_malformed_callback_inputs_fail_closed(self):
+        reference = torch.ones((2, 2, 2, 2))
+        branch = self.node.apply(
+            FakeModelPatcher(), conditioning(reference), strength=1.0
+        )[0]
+        callback = self.callback(branch)
+        valid = {
+            "denoised": torch.zeros((2, 2, 2, 2)),
+            "sigma": torch.ones((1,)),
+            "model_options": {},
+        }
+        with self.assertRaisesRegex(TypeError, "arguments must be a mapping"):
+            callback(None)
+        for key, value, error, message in (
+            ("denoised", torch.zeros((2, 2, 2)), ValueError, "BCHW"),
+            ("sigma", torch.empty((0,)), TypeError, "non-empty"),
+            ("model_options", object(), TypeError, "mapping"),
+        ):
+            args = dict(valid)
+            args[key] = value
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(error, message):
+                    callback(args)
+
+        args = dict(valid)
+        args["denoised"] = torch.zeros((2, 3, 2, 2))
+        with self.assertRaisesRegex(ValueError, "channel mismatch"):
+            callback(args)
+        args["denoised"] = torch.zeros((3, 2, 2, 2))
+        with self.assertRaisesRegex(ValueError, "reference batch"):
+            callback(args)
+
 
 if __name__ == "__main__":
     unittest.main()
