@@ -185,6 +185,31 @@ class KleinEnhancerTests(unittest.TestCase):
         self.assertTrue(torch.equal(result[:, :, 2560:5120], torch.full_like(result[:, :, 2560:5120], 3.0)))
         self.assertTrue(torch.equal(result[:, :, 5120:], torch.full_like(result[:, :, 5120:], 4.0)))
 
+    def test_klein_enhancer_4b_combined_scales_preserve_shape_dtype_and_source(self):
+        node = ENHANCER.NunchakuKleinEnhancer()
+        tensor = torch.ones((2, 3, 7680), dtype=torch.float16)
+        snapshot = tensor.clone()
+        metadata = {"attention_mask": torch.tensor([[1, 1, 0], [1, 1, 1]])}
+        output = node.enhance(
+            [[tensor, metadata]],
+            active_scale=2.0,
+            early_layer_scale=0.5,
+            mid_layer_scale=1.5,
+            late_layer_scale=2.0,
+            device="cpu",
+        )[0]
+        result = output[0][0]
+
+        self.assertEqual(result.shape, tensor.shape)
+        self.assertEqual(result.dtype, tensor.dtype)
+        self.assertTrue(torch.equal(result[:, :2, :2560], torch.ones_like(result[:, :2, :2560])))
+        self.assertTrue(torch.equal(result[:, :2, 2560:5120], torch.full_like(result[:, :2, 2560:5120], 3.0)))
+        self.assertTrue(torch.equal(result[:, :2, 5120:], torch.full_like(result[:, :2, 5120:], 4.0)))
+        self.assertTrue(torch.equal(result[:, 2], snapshot[:, 2]))
+        self.assertTrue(torch.equal(tensor, snapshot))
+        self.assertIsNot(output[0][1], metadata)
+        self.assertIs(output[0][1]["attention_mask"], metadata["attention_mask"])
+
     def test_klein_enhancer_preserve_original_endpoints_and_intermediate(self):
         node = ENHANCER.NunchakuKleinEnhancer()
         tensor = torch.ones((1, 2, 12288), dtype=torch.float32)
@@ -288,7 +313,21 @@ class KleinEnhancerTests(unittest.TestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     node.enhance(conditioning, **{name: value})
 
+    def test_klein_enhancer_rejects_malformed_conditioning_and_device(self):
+        node = ENHANCER.NunchakuKleinEnhancer()
+        with self.assertRaisesRegex(TypeError, "conditioning"):
+            node.enhance(None, active_scale=2.0)
+        with self.assertRaisesRegex(TypeError, "does not contain a tensor"):
+            node.enhance([[object(), {}]], active_scale=2.0)
+        with self.assertRaisesRegex(ValueError, r"\[batch, tokens, embedding\]"):
+            node.enhance([[torch.ones((2, 7680)), {}]], active_scale=2.0)
+        with self.assertRaisesRegex(ValueError, "device must be one of"):
+            node.enhance(
+                [[torch.ones((1, 2, 7680)), {}]],
+                active_scale=2.0,
+                device="cuda:999",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
-
