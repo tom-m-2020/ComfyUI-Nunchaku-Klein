@@ -13,6 +13,7 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
     - **4B Multi Reference Latent**
     - **4B Mask Ref Controller**
     - **4B Color Anchor**
+    - **4B Klein Enhancer**
   - **v1.0.0**
     - Added ordinary single- and multi-reference **4B editing support**.
     - 4B Enhancer compatibility, Direct K/V nodes, and Identity Feature Transfer Final remain explicitly **unavailable** until their later qualification stages complete.
@@ -62,7 +63,7 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] 4B basic T2I support
 - [x] 4B LoRA support
 - [x] 4B ordinary reference/edit support
-- [ ] 4B Enhancers
+- [x] 4B Enhancers (partially)
 - [ ] Nunchaku Power LoRA Loader
 - [ ] SpotEdit
 - [ ] ~~Normalized Attention Guidance~~
@@ -109,9 +110,9 @@ Only a limited number of versions are supported now.
   - Multi Reference Latent
   - Mask Ref Controller
   - Color Anchor
+  - Klein Enhancer
 - **9B only**
   - Klein Text Enhancer
-  - Klein Enhancer
   - Sectioned Encoder
   - Detail Controller
   - Ref Latent Weight (Compatibility ver)
