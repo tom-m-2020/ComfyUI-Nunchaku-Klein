@@ -19,7 +19,7 @@ PACKAGE = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = PACKAGE
 spec.loader.exec_module(PACKAGE)
 
-from comfy.text_encoders.flux import KleinTokenizer8B
+from comfy.text_encoders.flux import KleinTokenizer, KleinTokenizer8B
 
 from nunchaku_klein_test_package.nodes import enhancer as ENHANCER
 from nunchaku_klein_test_package.nodes.enhancer.common import (
@@ -29,10 +29,14 @@ from nunchaku_klein_test_package.nodes.enhancer.common import (
 
 
 class FakeClip:
-    def __init__(self):
-        self.tokenizer = KleinTokenizer8B()
+    def __init__(self, profile="9B", *, batch=1, width=1):
+        self.profile = profile
+        self.tokenizer = KleinTokenizer() if profile == "4B" else KleinTokenizer8B()
+        self.batch = batch
+        self.width = width
         self.last_prompt = None
         self.last_tokens = None
+        self.last_encoded_cond = None
 
     def tokenize(self, prompt):
         self.last_prompt = prompt
@@ -42,11 +46,13 @@ class FakeClip:
     def encode_from_tokens(self, tokens, return_dict=False):
         if not return_dict:
             raise AssertionError("Sectioned Encoder must preserve the metadata dict.")
-        sequence_length = len(tokens["qwen3_8b"][0])
+        key = "qwen3_4b" if self.profile == "4B" else "qwen3_8b"
+        sequence_length = len(tokens[key][0])
+        self.last_encoded_cond = torch.arange(
+            self.batch * sequence_length * self.width, dtype=torch.float16
+        ).reshape(self.batch, sequence_length, self.width)
         return {
-            "cond": torch.arange(sequence_length, dtype=torch.float16).reshape(
-                1, sequence_length, 1
-            ),
+            "cond": self.last_encoded_cond,
             "pooled_output": torch.tensor([3.0]),
             "attention_mask": torch.ones((1, sequence_length)),
             "existing": {"kept": True},
@@ -124,6 +130,61 @@ class SectionedEncoderTests(unittest.TestCase):
         self.assertIn("pooled_output", metadata)
         self.assertIn("attention_mask", metadata)
 
+    def test_4b_and_9b_profiles_have_exact_same_token_section_contract(self):
+        expected = {"front": (3, 4), "mid": (5, 6), "end": (7, 8)}
+        for profile in ("4B", "9B"):
+            with self.subTest(profile=profile):
+                clip = FakeClip(profile, batch=2, width=3)
+                result = ENHANCER.NunchakuKleinSectionedEncoder().encode_sectioned(
+                    clip,
+                    front_text="front",
+                    mid_text="middle",
+                    end_text="end",
+                    show_preview=False,
+                )
+                tensor, metadata = result[0][0]
+                self.assertEqual(metadata[KLEIN_SECTIONS_KEY], expected)
+                self.assertIs(tensor, clip.last_encoded_cond)
+                self.assertEqual(tensor.shape, (2, 512, 3))
+                self.assertEqual(tensor.dtype, torch.float16)
+
+    def test_each_section_and_its_boundaries_are_independent(self):
+        cases = {
+            "front": {"front": (3, 4), "mid": (4, 4), "end": (4, 4)},
+            "mid": {"front": (3, 3), "mid": (3, 4), "end": (4, 4)},
+            "end": {"front": (3, 3), "mid": (3, 3), "end": (3, 4)},
+        }
+        for name, expected in cases.items():
+            with self.subTest(section=name):
+                result = self.encode(**{f"{name}_text": name})
+                ranges = result[0][0][1][KLEIN_SECTIONS_KEY]
+                self.assertEqual(ranges, expected)
+                start, end = ranges[name]
+                self.assertEqual(end - start, 1)
+                self.assertEqual(result[0][0][0][0, start].item(), float(start))
+
+    def test_section_metadata_does_not_modify_native_conditioning_values(self):
+        clip = FakeClip("4B", batch=2, width=3)
+        node_result = ENHANCER.NunchakuKleinSectionedEncoder().encode_sectioned(
+            clip,
+            front_text="front",
+            mid_text="middle",
+            end_text="end",
+            show_preview=False,
+        )
+        sectioned = node_result[0][0][0]
+        direct = clip.encode_from_tokens(clip.tokenize(node_result[4]), return_dict=True)[
+            "cond"
+        ]
+        self.assertTrue(torch.equal(sectioned, direct))
+        for start, end in node_result[0][0][1][KLEIN_SECTIONS_KEY].values():
+            self.assertEqual(
+                torch.mean(torch.abs(sectioned[:, start:end] - direct[:, start:end])).item()
+                if end > start
+                else 0.0,
+                0.0,
+            )
+
     def test_empty_sections_and_combined_marker_override(self):
         result = self.encode(front_text="front", mid_text="", end_text="end")
         self.assertEqual(result[4], "front, end")
@@ -181,6 +242,11 @@ class SectionedEncoderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "qwen3_8b"):
             node.encode_sectioned(MissingQwen(), show_preview=False)
 
+        ambiguous = FakeClip("4B")
+        ambiguous.tokenizer.qwen3_8b = ambiguous.tokenizer.qwen3_4b
+        with self.assertRaisesRegex(RuntimeError, "exactly one"):
+            node.encode_sectioned(ambiguous, show_preview=False)
+
         original = self.clip.tokenizer.llama_template
         try:
             self.clip.tokenizer.llama_template = "{}"
@@ -194,8 +260,10 @@ class DetailControllerTests(unittest.TestCase):
     def setUp(self):
         self.node = ENHANCER.NunchakuKleinDetailController()
 
-    def conditioning(self, *, dtype=torch.float16, metadata=None, batch=2, length=12):
-        tensor = torch.ones((batch, length, 3), dtype=dtype)
+    def conditioning(
+        self, *, dtype=torch.float16, metadata=None, batch=2, length=12, width=3
+    ):
+        tensor = torch.ones((batch, length, width), dtype=dtype)
         return [[tensor, dict(metadata or {})]], tensor
 
     def test_registration_category_and_exact_ui_contract(self):
@@ -231,6 +299,66 @@ class DetailControllerTests(unittest.TestCase):
         self.assertIs(output, conditioning)
         self.assertIs(output[0][0], tensor)
         self.assertIs(output[0][1], conditioning[0][1])
+
+    def test_sectioned_encoder_composition_is_exact_for_4b_and_9b(self):
+        for profile in ("4B", "9B"):
+            with self.subTest(profile=profile):
+                clip = FakeClip(profile, batch=2, width=3)
+                sectioned = ENHANCER.NunchakuKleinSectionedEncoder().encode_sectioned(
+                    clip,
+                    front_text="front",
+                    mid_text="middle",
+                    end_text="end",
+                    show_preview=False,
+                )[0]
+                source = sectioned[0][0]
+                snapshot = source.clone()
+                metadata = sectioned[0][1]
+                output = self.node.control(
+                    sectioned,
+                    front_mult=2.0,
+                    mid_mult=3.0,
+                    end_mult=4.0,
+                    device="cpu",
+                )[0]
+                result = output[0][0]
+                self.assertTrue(torch.equal(result[:, :3], snapshot[:, :3]))
+                self.assertTrue(torch.equal(result[:, 3:4], snapshot[:, 3:4] * 2))
+                self.assertTrue(torch.equal(result[:, 4:5], snapshot[:, 4:5]))
+                self.assertTrue(torch.equal(result[:, 5:6], snapshot[:, 5:6] * 3))
+                self.assertTrue(torch.equal(result[:, 6:7], snapshot[:, 6:7]))
+                self.assertTrue(torch.equal(result[:, 7:8], snapshot[:, 7:8] * 4))
+                self.assertTrue(torch.equal(result[:, 8:], snapshot[:, 8:]))
+                self.assertTrue(torch.equal(source, snapshot))
+                self.assertEqual(output[0][1], metadata)
+                self.assertIsNot(output[0][1], metadata)
+
+    def test_context_width_is_not_a_controller_mapping(self):
+        sections = {
+            KLEIN_SECTIONS_KEY: {
+                "front": (1, 2),
+                "mid": (3, 4),
+                "end": (5, 6),
+            }
+        }
+        for profile, width in (("4B", 7680), ("9B", 12288)):
+            with self.subTest(profile=profile):
+                conditioning, source = self.conditioning(
+                    batch=1, length=8, width=width, metadata=sections
+                )
+                result = self.node.control(
+                    conditioning,
+                    front_mult=2.0,
+                    mid_mult=3.0,
+                    end_mult=4.0,
+                    device="cpu",
+                )[0][0][0]
+                self.assertEqual(result.shape, (1, 8, width))
+                self.assertTrue(torch.equal(result[:, 1], source[:, 1] * 2))
+                self.assertTrue(torch.equal(result[:, 3], source[:, 3] * 3))
+                self.assertTrue(torch.equal(result[:, 5], source[:, 5] * 4))
+                self.assertTrue(torch.equal(result[:, 0], source[:, 0]))
+                self.assertTrue(torch.equal(result[:, 6:], source[:, 6:]))
 
     def test_exact_metadata_ranges_overlap_order_and_clamping(self):
         metadata = {
@@ -317,6 +445,8 @@ class DetailControllerTests(unittest.TestCase):
             self.node.control(conditioning, emphasis_end=True)
         with self.assertRaisesRegex(TypeError, "debug"):
             self.node.control(conditioning, front_mult=2.0, debug=1)
+        with self.assertRaisesRegex(TypeError, "conditioning"):
+            self.node.control(None, front_mult=2.0, device="cpu")
 
 
 if __name__ == "__main__":

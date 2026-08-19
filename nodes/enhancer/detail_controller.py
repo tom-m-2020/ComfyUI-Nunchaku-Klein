@@ -169,7 +169,9 @@ class NunchakuKleinDetailController:
             and (emphasis_end == 0 or emphasis_mult == 1.0)
             and preserve_original == 0.0
         )
-        if not conditioning or neutral:
+        if neutral or (
+            isinstance(conditioning, (list, tuple)) and not conditioning
+        ):
             return (conditioning,)
 
         compute_device = _resolve_device(device)
