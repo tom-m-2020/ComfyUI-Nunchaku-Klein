@@ -101,6 +101,31 @@ Only a limited number of versions are supported now.
 - **Torch 2.11**
 - **CUDA 13.0**
 
+## Enhancer
+
+### What works with Vitoom Nunchaku
+
+- **4B/9B**
+  - Multi Reference Latent
+  - Mask Ref Controller
+  - Color Anchor
+- **9B only**
+  - Klein Text Enhancer
+  - Klein Enhancer
+  - Sectioned Encoder
+  - Detail Controller
+  - Ref Latent Weight (Compatibility ver)
+  - Text/Ref Balance (Compatibility ver)
+  - Identity Guidance
+
+### What does NOT work withOUT our callback derivative (fork of Vitoom Nunchaku)
+
+- **9B only**
+  - Ref Latent Weight (Direct K/V)
+  - Text/Ref Balance (Direct K/V)
+  - Ref Latent Controller (Direct K/V)
+  - Identity Feature Transfer Final
+
 ## Related Projects
 This project involves/is related to several third-party projects
 
