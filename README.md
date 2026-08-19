@@ -8,10 +8,14 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > **NOTE**: In order to use "**Direct K/V**" nodes or **Identity Feature Transfer**, you'll have to install the newer fork of Vitoom Nunchaku.
 
 ## News
-- **2026-08-19** **v1.0.0**
-  - Added ordinary single- and multi-reference **4B editing support**.
-  - 4B Enhancer compatibility, Direct K/V nodes, and Identity Feature Transfer Final
-    remain explicitly **unavailable** until their later qualification stages complete.
+- **2026-08-19**
+  - **v1.0.1**
+    - **4B Multi Reference Latent**
+    - **4B Mask Ref Controller**
+    - **4B Color Anchor**
+  - **v1.0.0**
+    - Added ordinary single- and multi-reference **4B editing support**.
+    - 4B Enhancer compatibility, Direct K/V nodes, and Identity Feature Transfer Final remain explicitly **unavailable** until their later qualification stages complete.
 - **2026-08-14**
   - Added strictly profiled **4B basic T2I support** with native Qwen3 4B conditioning.
   - Added profile-aware **4B LoRA support**.
