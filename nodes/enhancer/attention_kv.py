@@ -5,12 +5,16 @@ import torch
 
 def resolve_attention_token_ranges(metadata, packed_sequence_length, *, name):
     integer_fields = (
+        "block_index",
         "text_token_count",
         "generated_token_count",
         "logical_image_token_count",
         "padded_text_token_count",
         "padded_image_token_count",
         "packed_sequence_length",
+        "batch_size",
+        "head_count",
+        "head_dimension",
     )
     missing = [
         field
@@ -113,7 +117,19 @@ def validate_attention_kv_layout(query, key, value, metadata, *, name):
             f"{name} requires identical Q/K/V devices, got "
             f"Q={query.device}, K={key.device}, V={value.device}."
         )
-    return resolve_attention_token_ranges(metadata, query.shape[2], name=name)
+    ranges = resolve_attention_token_ranges(metadata, query.shape[2], name=name)
+    expected = (
+        metadata.batch_size,
+        metadata.head_count,
+        metadata.packed_sequence_length,
+        metadata.head_dimension,
+    )
+    if query.shape != expected:
+        raise ValueError(
+            f"{name} Q/K/V shape {list(query.shape)} does not match callback "
+            f"metadata {list(expected)}."
+        )
+    return ranges
 
 
 __all__ = ["resolve_attention_token_ranges", "validate_attention_kv_layout"]

@@ -16,9 +16,10 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
     - **4B Klein Enhancer**
     - **4B Sectioned Encoder**
     - **4B Detail Controller**
+    - **4B Direct K/V callback family**
   - **v1.0.0**
     - Added ordinary single- and multi-reference **4B editing support**.
-    - 4B Enhancer compatibility, Direct K/V nodes, and Identity Feature Transfer Final remain explicitly **unavailable** until their later qualification stages complete.
+    - Identity Feature Transfer Final remains explicitly **unavailable for 4B** until its separate schedule qualification completes.
 - **2026-08-14**
   - Added strictly profiled **4B basic T2I support** with native Qwen3 4B conditioning.
   - Added profile-aware **4B LoRA support**.
@@ -80,7 +81,8 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 
 ### Direct K/V
 
-If you want to use Ref Latent Weight (Direct K/V), Text/Ref Balance (Direct K/V) or Identity Feature Transfer:
+If you want to use Ref Latent Weight (Direct K/V), Text/Ref Balance (Direct K/V),
+Ref Latent Controller (Direct K/V), or Identity Feature Transfer:
 
 Either:
 - Install [my "fork of the fork" of nunchaku](https://github.com/tom-m-2020/vitoom-nunchaku-extended).
@@ -121,12 +123,13 @@ Only a limited number of versions are supported now.
   - Text/Ref Balance (Compatibility ver)
   - Identity Guidance
 
-### What does NOT work withOUT our callback derivative (fork of Vitoom Nunchaku)
+### What does NOT work without our callback derivative (fork of Vitoom Nunchaku)
 
-- **9B only**
+- **4B/9B**
   - Ref Latent Weight (Direct K/V)
   - Text/Ref Balance (Direct K/V)
   - Ref Latent Controller (Direct K/V)
+- **9B only**
   - Identity Feature Transfer Final
 
 ## Related Projects
