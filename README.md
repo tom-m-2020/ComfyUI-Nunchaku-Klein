@@ -14,6 +14,8 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
     - **4B Mask Ref Controller**
     - **4B Color Anchor**
     - **4B Klein Enhancer**
+    - **4B Sectioned Encoder**
+    - **4B Detail Controller**
   - **v1.0.0**
     - Added ordinary single- and multi-reference **4B editing support**.
     - 4B Enhancer compatibility, Direct K/V nodes, and Identity Feature Transfer Final remain explicitly **unavailable** until their later qualification stages complete.
@@ -111,10 +113,10 @@ Only a limited number of versions are supported now.
   - Mask Ref Controller
   - Color Anchor
   - Klein Enhancer
-- **9B only**
-  - Klein Text Enhancer
   - Sectioned Encoder
   - Detail Controller
+- **9B only**
+  - Klein Text Enhancer
   - Ref Latent Weight (Compatibility ver)
   - Text/Ref Balance (Compatibility ver)
   - Identity Guidance
