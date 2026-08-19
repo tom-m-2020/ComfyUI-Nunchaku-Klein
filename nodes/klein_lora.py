@@ -1,4 +1,6 @@
 from pathlib import Path
+from collections import OrderedDict
+import json
 import math
 
 import torch
@@ -47,45 +49,47 @@ def _lora_cache_identity(lora_path: Path, stat, profile: str) -> tuple:
     return (str(lora_path), stat.st_size, stat.st_mtime_ns, profile)
 
 
-class NunchakuKleinLoraLoader:
-    def __init__(self):
-        self.loaded_lora = None
+def _get_lora_adapter(model) -> NunchakuFlux2KleinAdapter:
+    adapter = getattr(model.model, "diffusion_model", None)
+    if not isinstance(adapter, NunchakuFlux2KleinAdapter):
+        raise TypeError(
+            "Nunchaku Klein LoRA loading requires a MODEL from "
+            "NunchakuKleinModelLoader."
+        )
+    return adapter
 
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "model": ("MODEL",),
-                "lora_name": (folder_paths.get_filename_list("loras"),),
-                "strength": (
-                    "FLOAT",
-                    {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05},
-                ),
-            }
-        }
 
-    RETURN_TYPES = ("MODEL",)
-    FUNCTION = "load_lora"
-    CATEGORY = "loaders"
-    DESCRIPTION = "Loads a compatible FLUX.2 Klein LoRA as branch-local execution state."
+class _KleinLoraSpecLoader:
+    def __init__(self, cache_entries: int):
+        if cache_entries < 1:
+            raise ValueError("Parsed LoRA cache requires at least one entry.")
+        self.cache_entries = cache_entries
+        self.loaded_loras = OrderedDict()
 
-    def load_lora(self, model, lora_name: str, strength: float):
+    def _get_cached_lora(self, fingerprint):
+        cached = self.loaded_loras.get(fingerprint)
+        if cached is not None:
+            self.loaded_loras.move_to_end(fingerprint)
+        return cached
+
+    def _cache_lora(self, fingerprint, state_dict, metadata):
+        self.loaded_loras[fingerprint] = (state_dict, metadata)
+        self.loaded_loras.move_to_end(fingerprint)
+        while len(self.loaded_loras) > self.cache_entries:
+            self.loaded_loras.popitem(last=False)
+
+    def load_spec(
+        self,
+        adapter: NunchakuFlux2KleinAdapter,
+        lora_name: str,
+        strength: float,
+    ) -> KleinLoraSpec | None:
         if not math.isfinite(strength):
             raise ValueError(f"LoRA strength must be finite, got {strength}.")
-        adapter = getattr(model.model, "diffusion_model", None)
-        if not isinstance(adapter, NunchakuFlux2KleinAdapter):
-            raise TypeError(
-                "Nunchaku Klein LoRA loading requires a MODEL from "
-                "NunchakuKleinModelLoader."
-            )
-        profile = adapter.architecture_profile
-        inherited = _get_inherited_lora_specs(model)
-
         if strength == 0.0:
-            branch = model.clone()
-            branch.model_options["transformer_options"][LORA_SPEC_OPTION] = inherited
-            return (branch,)
+            return None
 
+        profile = adapter.architecture_profile
         transformer = adapter.transformer
         adapter.shared_lora_state.require_lora_capabilities()
         convert_lora = getattr(transformer, "_convert_lora_keys", None)
@@ -95,13 +99,12 @@ class NunchakuKleinLoraLoader:
                 "LoRA conversion parser."
             )
 
-        lora_path = Path(
-            folder_paths.get_full_path_or_raise("loras", lora_name)
-        )
+        lora_path = Path(folder_paths.get_full_path_or_raise("loras", lora_name))
         stat = lora_path.stat()
         fingerprint = _lora_cache_identity(lora_path, stat, profile)
-        if self.loaded_lora is not None and self.loaded_lora[0] == fingerprint:
-            state_dict, metadata = self.loaded_lora[1:]
+        cached = self._get_cached_lora(fingerprint)
+        if cached is not None:
+            state_dict = cached[0]
         else:
             raw_state_dict, metadata = comfy.utils.load_torch_file(
                 str(lora_path),
@@ -114,21 +117,19 @@ class NunchakuKleinLoraLoader:
                 raise ValueError(f"LoRA {lora_path} contains non-tensor weights.")
 
             _validate_lora_profile(metadata, profile, lora_path)
-
             try:
                 state_dict = normalize_klein_lora_state(raw_state_dict)
             except (TypeError, ValueError) as error:
                 raise ValueError(f"LoRA {lora_path} is not supported: {error}") from error
 
             # Vitoom's parser is version-pinned private API, but it is the only
-            # backend path that normalizes every supported Klein LoRA key format.
+            # backend path that validates every supported Klein LoRA target.
             quantized, unquantized = convert_lora(state_dict)
             if not quantized and not unquantized:
                 raise ValueError(
                     f"LoRA {lora_path} has no weights recognized by the installed "
                     "Nunchaku FLUX.2 Klein parser."
                 )
-
             self._validate_pairs(
                 transformer,
                 lora_path,
@@ -143,28 +144,20 @@ class NunchakuKleinLoraLoader:
                 suffixes=(".lora_A.weight", ".lora_B.weight"),
                 profile=profile,
             )
-            self.loaded_lora = (fingerprint, state_dict, metadata)
+            self._cache_lora(fingerprint, state_dict, metadata)
 
-        branch = model.clone()
-        branch.model_options["transformer_options"][LORA_SPEC_OPTION] = (
-            *inherited,
-            KleinLoraSpec(
-                path=lora_path.resolve(),
-                size=stat.st_size,
-                mtime_ns=stat.st_mtime_ns,
-                strength=float(strength),
-                state_dict=state_dict,
-            ),
+        return KleinLoraSpec(
+            path=lora_path.resolve(),
+            size=stat.st_size,
+            mtime_ns=stat.st_mtime_ns,
+            strength=float(strength),
+            state_dict=state_dict,
         )
-        adapter.shared_lora_state.register_patcher(branch)
-        return (branch,)
 
     @staticmethod
     def _validate_pairs(transformer, lora_path, weights, *, suffixes, profile):
         first_suffix, second_suffix = suffixes
-        first_keys = sorted(
-            key for key in weights if key.endswith(first_suffix)
-        )
+        first_keys = sorted(key for key in weights if key.endswith(first_suffix))
         if len(weights) != len(first_keys) * 2:
             raise ValueError(
                 f"LoRA {lora_path} produced incomplete Nunchaku weight pairs."
@@ -202,3 +195,106 @@ class NunchakuKleinLoraLoader:
                     f"expected input/output dimensions "
                     f"{module.in_features}/{module.out_features}."
                 )
+
+
+class NunchakuKleinLoraLoader:
+    def __init__(self):
+        self.spec_loader = _KleinLoraSpecLoader(cache_entries=1)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "lora_name": (folder_paths.get_filename_list("loras"),),
+                "strength": (
+                    "FLOAT",
+                    {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "load_lora"
+    CATEGORY = "loaders"
+    DESCRIPTION = "Loads a compatible FLUX.2 Klein LoRA as branch-local execution state."
+
+    def load_lora(self, model, lora_name: str, strength: float):
+        adapter = _get_lora_adapter(model)
+        inherited = _get_inherited_lora_specs(model)
+        spec = self.spec_loader.load_spec(adapter, lora_name, strength)
+        if spec is None:
+            branch = model.clone()
+            branch.model_options["transformer_options"][LORA_SPEC_OPTION] = inherited
+            return (branch,)
+
+        branch = model.clone()
+        branch.model_options["transformer_options"][LORA_SPEC_OPTION] = (
+            *inherited,
+            spec,
+        )
+        adapter.shared_lora_state.register_patcher(branch)
+        return (branch,)
+
+
+class NunchakuKleinPowerLoraLoader:
+    def __init__(self):
+        self.spec_loader = _KleinLoraSpecLoader(cache_entries=4)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "rows": (
+                    "STRING",
+                    {
+                        "default": "[]",
+                        "lora_names": folder_paths.get_filename_list("loras"),
+                        "power_lora_rows": True,
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "load_loras"
+    CATEGORY = "loaders"
+    DESCRIPTION = "Loads an ordered set of compatible FLUX.2 Klein LoRAs."
+
+    def load_loras(self, model, rows: str):
+        adapter = _get_lora_adapter(model)
+        inherited = _get_inherited_lora_specs(model)
+        try:
+            parsed_rows = json.loads(rows)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ValueError("Power LoRA rows must be a JSON array.") from error
+        if not isinstance(parsed_rows, list):
+            raise ValueError("Power LoRA rows must be a JSON array.")
+
+        appended = []
+        for index, row in enumerate(parsed_rows, start=1):
+            if not isinstance(row, dict):
+                raise ValueError(f"Power LoRA row {index} must be an object.")
+            if row.get("enabled", True) is False:
+                continue
+            if row.get("enabled", True) is not True:
+                raise ValueError(f"Power LoRA row {index} enabled must be boolean.")
+            lora_name = row.get("lora_name")
+            strength = row.get("strength", 1.0)
+            if not isinstance(lora_name, str) or not lora_name:
+                raise ValueError(f"Power LoRA row {index} requires a LoRA name.")
+            if isinstance(strength, bool) or not isinstance(strength, (int, float)):
+                raise ValueError(f"Power LoRA row {index} strength must be a number.")
+            spec = self.spec_loader.load_spec(adapter, lora_name, float(strength))
+            if spec is not None:
+                appended.append(spec)
+
+        branch = model.clone()
+        branch.model_options["transformer_options"][LORA_SPEC_OPTION] = (
+            *inherited,
+            *appended,
+        )
+        if appended:
+            adapter.shared_lora_state.register_patcher(branch)
+        return (branch,)

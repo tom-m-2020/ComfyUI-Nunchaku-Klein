@@ -68,7 +68,7 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] 4B LoRA support
 - [x] 4B ordinary reference/edit support
 - [x] 4B Enhancers (partially)
-- [ ] Nunchaku Power LoRA Loader
+- [x] Nunchaku Power LoRA Loader
 - [ ] SpotEdit
 - [ ] ~~Normalized Attention Guidance~~
 
@@ -106,6 +106,28 @@ Only a limited number of versions are supported now.
 - **Python 3.13**
 - **Torch 2.11**
 - **CUDA 13.0**
+
+## Power LoRA Loader
+
+`Nunchaku FLUX.2 Klein Power LoRA Loader` adds an ordered set of Klein LoRAs
+to one model branch. Rows support add, select, signed strength, enable/disable,
+remove, and up/down reordering. Zero-strength rows add nothing.
+
+This is an aggregation UI over the ordinary loader contract. It preserves
+inherited LoRAs and publishes the same immutable ordered specification tuple as
+chaining `Nunchaku FLUX.2 Klein LoRA Loader` nodes. Execution-time composition,
+branch switching, accounting, caching, and rollback remain shared.
+
+Parsed canonical LoRAs are held in a small node-local LRU: one entry for the
+ordinary loader (matching its previous behavior) and four entries for the Power
+loader. Published model branches retain their own referenced LoRA states, so LRU
+eviction does not invalidate an existing branch.
+
+Nodes 2.0 is the primary frontend. The row editor registers `rows` as one
+custom widget and uses ComfyUI's `WEB_DIRECTORY`, `getCustomWidgets`, and
+`addDOMWidget` APIs; the widget's value is the serialized backend input. No raw
+JSON or helper LoRA-name widget is rendered. This was tested with ComfyUI 0.29.0
+and frontend package 1.47.10. rgthree is not a runtime dependency.
 
 ## Enhancer
 
