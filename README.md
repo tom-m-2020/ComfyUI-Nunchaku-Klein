@@ -8,6 +8,8 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > **NOTE**: In order to use "**Direct K/V**" nodes or **Identity Feature Transfer**, you'll have to install the newer fork of Vitoom Nunchaku.
 
 ## News
+- **2026-08-20** **v1.2.0**
+  - **Power LoRA Loader** (Nodes 2.0)
 - **2026-08-19**
   - **v1.1.0**
     - **4B Direct K/V callback family**
@@ -112,6 +114,10 @@ Only a limited number of versions are supported now.
 `Nunchaku FLUX.2 Klein Power LoRA Loader` adds an ordered set of Klein LoRAs
 to one model branch. Rows support add, select, signed strength, enable/disable,
 remove, and up/down reordering. Zero-strength rows add nothing.
+Each row's LoRA field opens a searchable picker. Search is case-insensitive and
+matches substrings anywhere in the full LoRA path. `+ Add LoRA` opens the same
+picker and creates a new enabled row at strength `1.0` only after selection;
+Escape or outside-click adds nothing.
 
 This is an aggregation UI over the ordinary loader contract. It preserves
 inherited LoRAs and publishes the same immutable ordered specification tuple as
