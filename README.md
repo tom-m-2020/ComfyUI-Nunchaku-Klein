@@ -8,8 +8,11 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 > **NOTE**: In order to use "**Direct K/V**" nodes or **Identity Feature Transfer**, you'll have to install the newer fork of Vitoom Nunchaku.
 
 ## News
-- **2026-08-20** **v1.2.0**
-  - **Power LoRA Loader** (Nodes 2.0)
+- **2026-08-20**
+  - **v1.2.0**
+    - **Power LoRA Loader** (Nodes 2.0)
+  - **v1.2.1**
+    - Bug fixes: some LoRA imcompatibility
 - **2026-08-19**
   - **v1.1.0**
     - **4B Direct K/V callback family**

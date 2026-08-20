@@ -1,3 +1,4 @@
+import math
 import re
 
 import torch
@@ -5,6 +6,10 @@ import torch
 
 _PAIR_SUFFIXES = ("lora_A.weight", "lora_B.weight")
 _SPLIT_SUFFIXES = ("lora.down.weight", "lora.up.weight")
+_ADAPTER_WEIGHT = re.compile(
+    r"^(?P<target>.+)\.lora_(?P<side>A|B)\."
+    r"(?P<adapter>[^.]+)\.weight$"
+)
 
 _CANONICAL_TARGET = re.compile(
     r"^(?:diffusion_model\.)?"
@@ -14,7 +19,7 @@ _CANONICAL_TARGET = re.compile(
     r"(?:single_blocks\.\d+\.linear(?:1|2)))$"
 )
 _SPLIT_TARGET = re.compile(
-    r"^transformer\."
+    r"^(?:transformer\.)?"
     r"(?P<blocks>transformer_blocks|single_transformer_blocks)\."
     r"(?P<index>\d+)\.(?P<target>.+)$"
 )
@@ -76,9 +81,115 @@ def _validate_pair(
             f"Klein LoRA pair {target!r} has mismatched dtypes: "
             f"{first.dtype} and {second.dtype}."
         )
+    if not first.is_floating_point():
+        raise ValueError(
+            f"Klein LoRA pair {target!r} must use floating-point weights, "
+            f"got {first.dtype}."
+        )
     if first.device.type != "cpu" or second.device.type != "cpu":
         raise ValueError(f"Klein LoRA pair {target!r} must be loaded on CPU.")
     return first, second
+
+
+def _normalize_adapter_namespace(
+    state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    namespaced = {}
+    adapter_names = set()
+    for key in state_dict:
+        match = _ADAPTER_WEIGHT.fullmatch(key)
+        if match is not None:
+            namespaced[key] = match
+            adapter_names.add(match.group("adapter"))
+
+    if not namespaced:
+        return state_dict
+    if len(adapter_names) != 1:
+        raise ValueError(
+            "Klein LoRA contains multiple PEFT adapter names: "
+            + repr(sorted(adapter_names))
+        )
+
+    ordinary = [
+        key
+        for key in state_dict
+        if key.endswith((".lora_A.weight", ".lora_B.weight"))
+    ]
+    if ordinary:
+        raise ValueError(
+            "Klein LoRA mixes namespaced and ordinary A/B weights: "
+            + repr(sorted(ordinary))
+        )
+
+    output = {}
+    for key, tensor in state_dict.items():
+        match = namespaced.get(key)
+        if match is None:
+            normalized_key = key
+        else:
+            normalized_key = (
+                f"{match.group('target')}.lora_{match.group('side')}.weight"
+            )
+        if normalized_key in output:
+            raise ValueError(
+                f"PEFT adapter normalization collides at {normalized_key!r}."
+            )
+        output[normalized_key] = tensor
+    return output
+
+
+def _fold_canonical_alphas(
+    state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    alpha_keys = sorted(key for key in state_dict if key.endswith(".alpha"))
+    if not alpha_keys:
+        return state_dict
+
+    alpha_by_target = {}
+    for alpha_key in alpha_keys:
+        target = alpha_key[: -len(".alpha")]
+        if _CANONICAL_TARGET.fullmatch(target) is None:
+            raise ValueError(
+                f"Unsupported Klein LoRA alpha target: {alpha_key!r}."
+            )
+        first, _second = _validate_pair(state_dict, target, _PAIR_SUFFIXES)
+        alpha = state_dict[alpha_key]
+        if (
+            alpha.ndim != 0
+            or alpha.dtype == torch.bool
+            or alpha.is_complex()
+            or alpha.device.type != "cpu"
+        ):
+            raise ValueError(
+                f"Klein LoRA alpha {alpha_key!r} must be a real CPU scalar, "
+                f"got shape {list(alpha.shape)}, dtype {alpha.dtype}, and "
+                f"device {alpha.device}."
+            )
+        value = float(alpha.item())
+        if not math.isfinite(value):
+            raise ValueError(
+                f"Klein LoRA alpha {alpha_key!r} must be finite, got {value}."
+            )
+        alpha_by_target[target] = value / first.shape[0]
+
+    output = {}
+    for key, tensor in state_dict.items():
+        if key.endswith(".alpha"):
+            continue
+        target = (
+            key[: -len(".lora_B.weight")]
+            if key.endswith(".lora_B.weight")
+            else None
+        )
+        scale = alpha_by_target.get(target)
+        folded = tensor if scale is None or scale == 1.0 else tensor * scale
+        if scale is not None and scale != 1.0 and not torch.isfinite(folded).all():
+            raise ValueError(
+                f"Klein LoRA alpha folding produced non-finite weights for "
+                f"{target!r}."
+            )
+        output[key] = folded
+    return output
 
 
 def _canonical_targets(state_dict: dict[str, torch.Tensor]) -> set[str] | None:
@@ -222,6 +333,9 @@ def normalize_klein_lora_state(
         raise ValueError("Klein LoRA state keys must be strings.")
     if not all(torch.is_tensor(tensor) for tensor in state_dict.values()):
         raise ValueError("Klein LoRA state contains non-tensor weights.")
+
+    state_dict = _normalize_adapter_namespace(state_dict)
+    state_dict = _fold_canonical_alphas(state_dict)
 
     canonical_targets = _canonical_targets(state_dict)
     if canonical_targets is not None:

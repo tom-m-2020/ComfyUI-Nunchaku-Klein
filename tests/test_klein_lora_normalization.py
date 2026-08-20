@@ -39,6 +39,11 @@ def add_ab_pair(state, target, rank, in_features, out_features):
     state[f"{target}.lora_B.weight"] = torch.randn(out_features, rank)
 
 
+def add_namespaced_pair(state, target, adapter, rank, in_features, out_features):
+    state[f"{target}.lora_A.{adapter}.weight"] = torch.randn(rank, in_features)
+    state[f"{target}.lora_B.{adapter}.weight"] = torch.randn(out_features, rank)
+
+
 class KleinLoraNormalizationTests(unittest.TestCase):
     def test_canonical_state_is_validated_and_returned_unchanged(self):
         state = {
@@ -139,6 +144,115 @@ class KleinLoraNormalizationTests(unittest.TestCase):
             "diffusion_model.single_blocks.3.linear2.lora_B.weight", normalized
         )
         self.assertEqual(len(normalized), 18)
+
+    def test_one_peft_adapter_name_is_removed_before_exact_qkv_fusion(self):
+        state = {}
+        prefix = "transformer_blocks.0.attn"
+        for name, rank in (("to_q", 2), ("to_k", 3), ("to_v", 4)):
+            add_namespaced_pair(state, f"{prefix}.{name}", "art_style", rank, 7, 5)
+
+        normalized = normalize_klein_lora_state(state)
+        fused_a = normalized[
+            "diffusion_model.double_blocks.0.img_attn.qkv.lora_A.weight"
+        ]
+        fused_b = normalized[
+            "diffusion_model.double_blocks.0.img_attn.qkv.lora_B.weight"
+        ]
+        expected = torch.cat(
+            [
+                state[f"{prefix}.{name}.lora_B.art_style.weight"]
+                @ state[f"{prefix}.{name}.lora_A.art_style.weight"]
+                for name in ("to_q", "to_k", "to_v")
+            ],
+            dim=0,
+        )
+
+        self.assertTrue(torch.allclose(fused_b @ fused_a, expected))
+        self.assertFalse(any("art_style" in key for key in normalized))
+        self.assertEqual(len(state), 6)
+
+    def test_multiple_or_mixed_peft_adapter_names_reject(self):
+        target = "single_transformer_blocks.0.attn.to_out"
+        multiple = {}
+        add_namespaced_pair(multiple, target, "first", 2, 4, 6)
+        multiple[
+            "single_transformer_blocks.1.attn.to_out.lora_A.second.weight"
+        ] = torch.randn(2, 4)
+        multiple[
+            "single_transformer_blocks.1.attn.to_out.lora_B.second.weight"
+        ] = torch.randn(6, 2)
+        with self.assertRaisesRegex(ValueError, "multiple PEFT adapter names"):
+            normalize_klein_lora_state(multiple)
+
+        mixed = {}
+        add_namespaced_pair(mixed, target, "first", 2, 4, 6)
+        add_ab_pair(mixed, "single_transformer_blocks.1.attn.to_out", 2, 4, 6)
+        with self.assertRaisesRegex(ValueError, "mixes namespaced and ordinary"):
+            normalize_klein_lora_state(mixed)
+
+    def test_canonical_alpha_folds_standard_scaling_and_removes_metadata(self):
+        target = "diffusion_model.double_blocks.0.img_attn.proj"
+        a = torch.randn(3, 5, dtype=torch.float64)
+        b = torch.randn(7, 3, dtype=torch.float64)
+        state = {
+            f"{target}.lora_A.weight": a,
+            f"{target}.lora_B.weight": b,
+            f"{target}.alpha": torch.tensor(1.5, dtype=torch.float64),
+        }
+
+        normalized = normalize_klein_lora_state(state)
+        expected = (1.5 / 3) * (b @ a)
+
+        self.assertIs(normalized[f"{target}.lora_A.weight"], a)
+        self.assertTrue(
+            torch.allclose(
+                normalized[f"{target}.lora_B.weight"] @ a,
+                expected,
+                rtol=0,
+                atol=1e-12,
+            )
+        )
+        self.assertFalse(any(key.endswith(".alpha") for key in normalized))
+        self.assertEqual(set(state), {
+            f"{target}.lora_A.weight",
+            f"{target}.lora_B.weight",
+            f"{target}.alpha",
+        })
+
+    def test_negative_strength_remains_equivalent_after_alpha_folding(self):
+        target = "diffusion_model.single_blocks.0.linear1"
+        a = torch.randn(4, 6, dtype=torch.float64)
+        b = torch.randn(8, 4, dtype=torch.float64)
+        alpha = 2.0
+        strength = -1.75
+        normalized = normalize_klein_lora_state(
+            {
+                f"{target}.lora_A.weight": a,
+                f"{target}.lora_B.weight": b,
+                f"{target}.alpha": torch.tensor(alpha),
+            }
+        )
+
+        actual = strength * (normalized[f"{target}.lora_B.weight"] @ a)
+        expected = strength * (alpha / a.shape[0]) * (b @ a)
+        self.assertTrue(torch.allclose(actual, expected, rtol=0, atol=1e-12))
+
+    def test_malformed_or_nonfinite_alpha_rejects(self):
+        target = "diffusion_model.single_blocks.0.linear2"
+        base = {
+            f"{target}.lora_A.weight": torch.randn(2, 3),
+            f"{target}.lora_B.weight": torch.randn(4, 2),
+        }
+        for alpha in (
+            torch.tensor([2.0]),
+            torch.tensor(float("nan")),
+            torch.tensor(float("inf")),
+        ):
+            with self.subTest(alpha=alpha):
+                with self.assertRaisesRegex(ValueError, "real CPU scalar|finite"):
+                    normalize_klein_lora_state(
+                        {**base, f"{target}.alpha": alpha}
+                    )
 
     def test_incomplete_qkv_group_fails_with_missing_targets(self):
         state = {}
