@@ -74,8 +74,9 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] 4B ordinary reference/edit support
 - [x] 4B Enhancers (partially)
 - [x] Nunchaku Power LoRA Loader
-- [ ] SpotEdit
+- [ ] ~~SpotEdit~~
 - [ ] ~~Normalized Attention Guidance~~
+- [ ] More Nunchaku derivative backend distribution
 
 ## Installation
 
