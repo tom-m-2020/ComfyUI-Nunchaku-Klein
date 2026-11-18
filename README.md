@@ -74,9 +74,7 @@ Added features such as **Klein Enhancer** ported + compatibility version to work
 - [x] 4B ordinary reference/edit support
 - [x] 4B Enhancers (partially)
 - [x] Nunchaku Power LoRA Loader
-- [ ] ~~SpotEdit~~
-- [ ] ~~Normalized Attention Guidance~~
-- [ ] More Nunchaku derivative backend distribution
+- [x] More Nunchaku derivative backend distribution
 
 ## Installation
 
@@ -99,18 +97,28 @@ Either:
 
 #### Currently supported wheels
 
-Only a limited number of versions are supported now.
+Only exact verified derivatives are supported for callback-dependent features.
 
-- `nunchaku-1.3.0.dev20260629+cu13.0torch2.11-cp313-cp313-win_amd64`
+- Production-qualified baseline: `nunchaku-1.3.0.dev20260629+cu13.0torch2.11.kleincallback2-cp313-cp313-win_amd64`
+- Qualified release candidate (not promoted): `nunchaku-1.4.1+cu13.0torch2.14.kleincallback2-cp313-cp313-win_amd64`
+  - SHA-256: `AD2CDAA40E48B138D4B1F9B6AA6F9CD99364DCE5169B836BBDEC036D83053FEF`
 
-(Basic usage supports all the other versions, too.)
+The 1.4.1 wheel must be evaluated in a separate Python 3.13 / PyTorch
+2.14.0+cu130 environment. Never install it over the qualified PyTorch 2.11
+environment. See [installation and rollback](docs/BACKEND_1.4.1_INSTALLATION.md)
+and the [draft release notes](docs/BACKEND_1.4.1_RELEASE_NOTES.md).
+
+Other wheels may expose upstream basic functionality, but callback-dependent
+nodes must fail closed when callback API v3 is unavailable. Linux and aarch64
+derivatives have not received runtime qualification here.
 
 ### Environment
 
 **Tested with**:
-- **ComfyUI >=0.29**. Older versions may not work.
+- **ComfyUI commit `1e719279f56558b2c6d5d2f2aa590b197559f1f6`** for the 1.4.1 qualification.
 - **Python 3.13**
-- **Torch 2.11**
+- **Torch 2.11** for the production-qualified 1.3 baseline
+- **Torch 2.14.0+cu130** for the qualified 1.4.1 Windows candidate
 - **CUDA 13.0**
 
 ## Power LoRA Loader
